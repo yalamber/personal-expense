@@ -15,7 +15,8 @@
     "db:migrate:local": "wrangler d1 migrations apply personal-expense --local",
     "db:migrate:remote": "wrangler d1 migrations apply personal-expense --remote",
     "cf:types": "wrangler types",
-    "postinstall": "wrangler types"
+    "postinstall": "wrangler types",
+    "deploy:cf": "wrangler d1 migrations apply personal-expense --remote && wrangler deploy"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",

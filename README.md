@@ -65,12 +65,29 @@ In the Cloudflare dashboard, open Email › Email Routing for the `INBOUND_DOMAI
 rule (or a catch-all) that sends `stmt+*@<domain>` to the Worker named `personal-expense`.
 Queues need the Workers Paid plan; everything else fits the free allowances for one household.
 
-### Continuous deploys
+### Automatic deploys from GitHub (Workers Builds)
 
-`.github/workflows/deploy.yml` type-checks, tests, applies migrations and deploys on every push
-to `main`. It needs two repository secrets: `CLOUDFLARE_API_TOKEN` (a token with Workers
-Scripts, D1, R2, Queues and Workers KV edit permissions) and `CLOUDFLARE_ACCOUNT_ID`.
-The one-time setup above still has to run once before the first workflow deploy.
+Cloudflare builds and deploys this repository itself; no CI workflow is needed.
+
+1. Run the one-time setup above first so the D1 id is committed and the resources exist.
+2. In the Cloudflare dashboard go to Workers & Pages › Create › Import a repository, connect
+   GitHub, and pick `yalamber/personal-expense`.
+3. Settings for the build:
+
+   | Setting | Value |
+   | --- | --- |
+   | Project name | `personal-expense` (must match `name` in `wrangler.jsonc`) |
+   | Production branch | `main` |
+   | Build command | `npm run build` |
+   | Deploy command | `npm run deploy:cf` |
+   | Root directory | `/` |
+
+   The deploy command applies pending D1 migrations and then runs `wrangler deploy`.
+4. Add `AUTH_SECRET` (and `RESEND_API_KEY` if used) under the Worker's Settings › Variables
+   and Secrets after the first deploy, or beforehand with `npx wrangler secret put`.
+
+Every push to the production branch then deploys. Pushes to other branches build a preview
+version without affecting production. Build logs are under the Worker's Deployments tab.
 
 ## Scripts
 
