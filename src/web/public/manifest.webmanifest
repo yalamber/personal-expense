@@ -1,0 +1,9 @@
+{
+  "name": "Family Money",
+  "short_name": "Money",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3F5F7",
+  "theme_color": "#15202B",
+  "icons": []
+}

@@ -1,0 +1,20 @@
+From: Bank Alerts <alerts@bank.example>
+To: stmt+replacewithtoken@example.com
+Subject: Your transaction alert
+Date: Wed, 15 Oct 2026 09:12:00 +0000
+Message-ID: <sample-0001@bank.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset=utf-8
+
+A purchase of 42.50 was made at GROCER STORE 123 on 15 Oct 2026 with the card ending 1234.
+
+--b1
+Content-Type: text/csv; name="transactions.csv"
+Content-Disposition: attachment; filename="transactions.csv"
+
+Date,Description,Amount
+2026-10-15,GROCER STORE 123,-42.50
+--b1--

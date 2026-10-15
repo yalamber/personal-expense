@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+
+# Used to sign session and magic-link tokens. Any long random string.
+AUTH_SECRET=change-me-to-a-long-random-string
+
+# Only needed when MAILER=resend in wrangler.jsonc.
+# RESEND_API_KEY=re_xxx

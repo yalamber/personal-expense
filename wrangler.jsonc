@@ -1,0 +1,70 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "personal-expense",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static web app built by Vite into dist/client. Unknown paths fall back to index.html.
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  "vars": {
+    // Public origin of the app, used in magic-link emails.
+    "APP_ORIGIN": "http://localhost:8787",
+    // Inbound statement address is `${INBOUND_LOCAL_PART}+<household token>@${INBOUND_DOMAIN}`.
+    "INBOUND_DOMAIN": "example.com",
+    "INBOUND_LOCAL_PART": "stmt",
+    // "log" prints outgoing mail to the console; "resend" sends through Resend (needs RESEND_API_KEY secret).
+    "MAILER": "log",
+    "MAIL_FROM": "Family Money <money@example.com>",
+    // Raw statement emails are deleted from R2 after this many days.
+    "RAW_MAIL_RETENTION_DAYS": "90"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "personal-expense",
+      "database_id": "REPLACE_WITH_D1_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "RAW_MAIL",
+      "bucket_name": "personal-expense-mail"
+    }
+  ],
+
+  "queues": {
+    "producers": [
+      { "binding": "PARSE_QUEUE", "queue": "personal-expense-parse" }
+    ],
+    "consumers": [
+      {
+        "queue": "personal-expense-parse",
+        "max_batch_size": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "personal-expense-parse-dlq"
+      }
+    ]
+  },
+
+  // Email Routing: route `stmt+*@yourdomain` to this Worker in the Cloudflare dashboard.
+  "send_email": [],
+
+  "triggers": {
+    // Nightly housekeeping at 03:10 UTC: recurring rules, insights, forecast (later phases), raw-mail retention.
+    "crons": ["10 3 * * *"]
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

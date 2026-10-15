@@ -1,0 +1,267 @@
+/* Design tokens from the plan. One ground, one ink, two accents of like weight. */
+:root {
+  --ground: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #15202b;
+  --ink-soft: #2e3b48;
+  --muted: #4b5866;
+  --line: #d6dce2;
+  --line-soft: #e6eaee;
+  --teal: #0e7c72;
+  --teal-deep: #0a5c55;
+  --teal-soft: #e3f3f0;
+  --amber: #b45309;
+  --amber-deep: #8a4a05;
+  --amber-soft: #fbeedc;
+  --radius: 10px;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+a {
+  color: var(--teal);
+}
+a:hover {
+  color: var(--teal-deep);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+h1 {
+  font-size: 26px;
+  font-weight: 700;
+}
+h2 {
+  font-size: 17px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button,
+.button {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--teal);
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 16px;
+  min-height: 44px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+button:hover,
+.button:hover {
+  background: var(--teal-deep);
+  color: #fff;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+button.secondary,
+.button.secondary {
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+button.secondary:hover,
+.button.secondary:hover {
+  background: var(--ground);
+  color: var(--ink);
+}
+button.quiet {
+  color: var(--muted);
+  background: transparent;
+  padding: 10px 8px;
+}
+button.quiet:hover {
+  background: var(--ground);
+  color: var(--ink);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 500;
+}
+input,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 44px;
+}
+input:focus,
+select:focus {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.pill.teal {
+  background: var(--teal-soft);
+  color: var(--teal-deep);
+}
+.pill.amber {
+  background: var(--amber-soft);
+  color: var(--amber-deep);
+}
+.pill.grey {
+  background: var(--line-soft);
+  color: var(--muted);
+}
+.pill.ink {
+  background: var(--ink);
+  color: #fff;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--amber-deep);
+  background: var(--amber-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 10px 8px 0;
+  border-bottom: 2px solid var(--ink);
+}
+td {
+  padding: 10px 10px 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+
+header.app {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 0 16px;
+}
+header.app .inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+header.app nav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+header.app nav a {
+  text-decoration: none;
+  color: var(--muted);
+  padding: 10px 12px;
+  border-radius: 8px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+header.app nav a.active {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--teal-soft);
+}
+
+main.app {
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.auth {
+  max-width: 420px;
+  margin: 10vh auto;
+  padding: 0 16px;
+}
