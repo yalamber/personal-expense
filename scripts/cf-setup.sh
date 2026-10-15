@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# One-time Cloudflare setup: creates the D1 database, R2 bucket and queues the Worker
-# needs, writes the D1 id into wrangler.jsonc, and applies migrations remotely.
+# One-time Cloudflare setup: creates the D1 database and R2 bucket the Worker needs, writes the D1 id into wrangler.jsonc, and applies migrations remotely.
 # Safe to re-run: every step skips what already exists.
 #
 # Needs either `wrangler login` or CLOUDFLARE_API_TOKEN (+ CLOUDFLARE_ACCOUNT_ID) in the env.
@@ -9,8 +8,6 @@ cd "$(dirname "$0")/.."
 
 DB_NAME="personal-expense"
 BUCKET="personal-expense-mail"
-QUEUE="personal-expense-parse"
-DLQ="personal-expense-parse-dlq"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
@@ -39,15 +36,6 @@ else
   npx wrangler r2 bucket create "$BUCKET" >/dev/null && echo "created"
 fi
 
-say "Queues: $QUEUE, $DLQ (Workers Paid plan required)"
-for q in "$QUEUE" "$DLQ"; do
-  if npx wrangler queues info "$q" >/dev/null 2>&1; then
-    echo "$q exists"
-  else
-    npx wrangler queues create "$q" >/dev/null && echo "$q created"
-  fi
-done
-
 say "Applying migrations to the remote database"
 npx wrangler d1 migrations apply "$DB_NAME" --remote
 
@@ -55,8 +43,8 @@ say "Done. Next:"
 cat <<'EOF'
   1. Set the secret:        npx wrangler secret put AUTH_SECRET
      (and RESEND_API_KEY if MAILER=resend)
-  2. Edit wrangler.jsonc vars: APP_ORIGIN, INBOUND_DOMAIN, MAIL_FROM, MAILER
-  3. Deploy:                npm run deploy
+  2. Edit wrangler.jsonc vars: INBOUND_DOMAIN, MAIL_FROM, MAILER
+  3. Deploy:                npm run deploy  (or connect the repo in Workers Builds)
   4. In the Cloudflare dashboard, Email > Email Routing for INBOUND_DOMAIN:
      add a rule (or catch-all) that sends stmt+*@<domain> to the Worker "personal-expense".
 EOF

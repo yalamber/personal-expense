@@ -14,8 +14,9 @@
   },
 
   "vars": {
-    // Public origin of the app, used in magic-link emails.
-    "APP_ORIGIN": "http://localhost:8787",
+    // Public origin used in magic-link emails. Empty means "use the origin of the request",
+    // which works for workers.dev and custom domains alike.
+    "APP_ORIGIN": "",
     // Inbound statement address is `${INBOUND_LOCAL_PART}+<household token>@${INBOUND_DOMAIN}`.
     "INBOUND_DOMAIN": "example.com",
     "INBOUND_LOCAL_PART": "stmt",
@@ -30,7 +31,7 @@
     {
       "binding": "DB",
       "database_name": "personal-expense",
-      "database_id": "REPLACE_WITH_D1_ID",
+      "database_id": "eddba7ce-aa58-43c2-891e-7a6e1a075757",
       "migrations_dir": "migrations"
     }
   ],
@@ -42,22 +43,15 @@
     }
   ],
 
-  "queues": {
-    "producers": [
-      { "binding": "PARSE_QUEUE", "queue": "personal-expense-parse" }
-    ],
-    "consumers": [
-      {
-        "queue": "personal-expense-parse",
-        "max_batch_size": 5,
-        "max_retries": 3,
-        "dead_letter_queue": "personal-expense-parse-dlq"
-      }
-    ]
-  },
+  // Optional: statement emails are processed right after they arrive (ctx.waitUntil) and the
+  // nightly cron retries any that got stuck. To move parsing onto a queue instead (Workers Paid
+  // plan, and a deploy token with Queues edit), uncomment this block; the code picks it up.
+  // "queues": {
+  //   "producers": [{ "binding": "PARSE_QUEUE", "queue": "personal-expense-parse" }],
+  //   "consumers": [{ "queue": "personal-expense-parse", "max_batch_size": 5, "max_retries": 3 }]
+  // },
 
   // Email Routing: route `stmt+*@yourdomain` to this Worker in the Cloudflare dashboard.
-  "send_email": [],
 
   "triggers": {
     // Nightly housekeeping at 03:10 UTC: recurring rules, insights, forecast (later phases), raw-mail retention.

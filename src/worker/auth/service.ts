@@ -18,8 +18,11 @@ export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
 }
 
-/** Creates a one-time magic link and emails it. Always resolves, so callers cannot probe for accounts. */
-export async function requestMagicLink(db: Db, env: AppEnv, rawEmail: string): Promise<void> {
+/**
+ * Creates a one-time magic link and emails it. Always resolves, so callers cannot probe for accounts.
+ * `requestOrigin` is used for the link unless APP_ORIGIN pins a public origin.
+ */
+export async function requestMagicLink(db: Db, env: AppEnv, rawEmail: string, requestOrigin: string): Promise<void> {
   const email = normalizeEmail(rawEmail);
   const token = randomToken(40);
   await db.insert(schema.magicLinks).values({
@@ -28,7 +31,8 @@ export async function requestMagicLink(db: Db, env: AppEnv, rawEmail: string): P
     email,
     expiresAt: isoInMinutes(MAGIC_LINK_MINUTES),
   });
-  const url = `${env.APP_ORIGIN}/api/auth/callback?token=${encodeURIComponent(token)}`;
+  const origin = (env.APP_ORIGIN || requestOrigin).replace(/\/+$/, "");
+  const url = `${origin}/api/auth/callback?token=${encodeURIComponent(token)}`;
   await sendMail(env, {
     to: email,
     subject: "Your sign-in link",
@@ -90,7 +94,7 @@ export async function endSession(db: Db, sessionId: string): Promise<void> {
   await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
 }
 
-export function sessionCookieHeader(value: string, env: AppEnv, maxAgeSeconds = SESSION_DAYS * 86_400): string {
-  const secure = env.APP_ORIGIN.startsWith("https://") ? "; Secure" : "";
-  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+/** `secure` should be true whenever the request came in over HTTPS (always the case once deployed). */
+export function sessionCookieHeader(value: string, secure: boolean, maxAgeSeconds = SESSION_DAYS * 86_400): string {
+  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
 }

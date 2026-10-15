@@ -5,19 +5,20 @@
  *   1. resolve the household from the token in the recipient address
  *   2. decide whether the sender is on an account's allowlist (else quarantine)
  *   3. stream the raw message to R2
- *   4. write a statement_emails row and enqueue a parse job
+ *   4. write a statement_emails row and dispatch a parse job
  *
- * Parsing happens in the queue consumer, where retries and time limits are more forgiving.
+ * Parsing runs after the handler returns (queue if bound, otherwise ctx.waitUntil).
  */
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "../db";
 import type { AppEnv } from "../env";
 import { newId } from "../lib/ids";
 import { extractEmail, parseInboundAddress, rawMailKeys, senderMatches } from "../lib/inbound";
+import { dispatchParse } from "./dispatch";
 
 const MAX_RAW_BYTES = 25 * 1024 * 1024;
 
-export async function handleInboundEmail(message: ForwardableEmailMessage, env: AppEnv): Promise<void> {
+export async function handleInboundEmail(message: ForwardableEmailMessage, env: AppEnv, ctx: ExecutionContext): Promise<void> {
   const inbound = parseInboundAddress(message.to);
   if (!inbound || inbound.localPart !== env.INBOUND_LOCAL_PART.toLowerCase()) {
     // Not shaped like our address: accept and drop so nothing is revealed to the sender.
@@ -76,7 +77,7 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
   }
 
   if (matched) {
-    await env.PARSE_QUEUE.send({ kind: "parse-statement-email", statementEmailId, householdId: household.id });
+    await dispatchParse(env, ctx, { kind: "parse-statement-email", statementEmailId, householdId: household.id });
   }
   console.log(`[email] stored ${statementEmailId} status=${status} from=${from} household=${household.id}`);
 }

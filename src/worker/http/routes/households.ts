@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
 import { schema } from "../../db";
+import { dispatchParse } from "../../ingest/dispatch";
 import { inboundAddressFor } from "../../lib/inbound";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
@@ -185,7 +186,7 @@ scoped.post("/statements/:statementId/release", requireAdmin, async (c) => {
     .update(schema.statementEmails)
     .set({ status: "received", accountId: body.accountId ?? row.accountId, error: null })
     .where(eq(schema.statementEmails.id, row.id));
-  await c.env.PARSE_QUEUE.send({ kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
+  await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
   return c.json({ ok: true });
 });
 
