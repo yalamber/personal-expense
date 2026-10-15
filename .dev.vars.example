@@ -1,7 +1,11 @@
 # Copy to .dev.vars for local development. Never commit .dev.vars.
 
-# Used to sign session and magic-link tokens. Any long random string.
-AUTH_SECRET=change-me-to-a-long-random-string
+# Needed locally because wrangler dev serves requests under the custom domain from
+# wrangler.jsonc; this keeps sign-in links pointing at your local server.
+APP_ORIGIN=http://localhost:8787
+
+# Optional. Without it a signing secret is generated and stored in the local D1.
+# AUTH_SECRET=change-me-to-a-long-random-string
 
 # Only needed when MAILER=resend in wrangler.jsonc.
 # RESEND_API_KEY=re_xxx

@@ -9,16 +9,8 @@ export const app = new Hono<HonoEnv>();
 app.use("*", withDb);
 
 app.get("/api/health", (c) =>
-  c.json({ ok: true, authConfigured: Boolean(c.env.AUTH_SECRET), time: new Date().toISOString() }),
+  c.json({ ok: true, authSecret: c.env.AUTH_SECRET ? "worker-secret" : "generated", time: new Date().toISOString() }),
 );
-
-// Without AUTH_SECRET nothing can be signed safely, so fail loudly instead of running insecurely.
-app.use("/api/*", async (c, next) => {
-  if (!c.env.AUTH_SECRET) {
-    return c.json({ error: "Server is not configured: set the AUTH_SECRET secret on the Worker." }, 503);
-  }
-  await next();
-});
 app.route("/api/auth", authRoutes);
 app.route("/api", householdRoutes);
 

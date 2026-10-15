@@ -7,8 +7,11 @@
  * or `wrangler secret put`.
  */
 export type AppEnv = { [K in keyof Env]: Env[K] extends string ? string : Env[K] } & {
-  /** Signs magic-link and session tokens. Required. */
-  AUTH_SECRET: string;
+  /**
+   * Signs session cookies. Optional: when unset, a random secret is generated once and kept in
+   * the app_settings table. Set it as a Worker secret to manage it yourself.
+   */
+  AUTH_SECRET?: string;
   /** Only needed when MAILER=resend. */
   RESEND_API_KEY?: string;
   /** Optional. When bound, parse jobs go through the queue; otherwise they run inline. */

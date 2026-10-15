@@ -5,6 +5,11 @@
   "compatibility_date": "2025-10-01",
   "compatibility_flags": ["nodejs_compat"],
 
+  // The app is served on its own subdomain; deploying creates the DNS record and certificate.
+  // workers.dev stays on as a fallback address.
+  "routes": [{ "pattern": "money.leadbase.stream", "custom_domain": true }],
+  "workers_dev": true,
+
   // Static web app built by Vite into dist/client. Unknown paths fall back to index.html.
   "assets": {
     "directory": "./dist/client",
@@ -18,11 +23,12 @@
     // which works for workers.dev and custom domains alike.
     "APP_ORIGIN": "",
     // Inbound statement address is `${INBOUND_LOCAL_PART}+<household token>@${INBOUND_DOMAIN}`.
-    "INBOUND_DOMAIN": "example.com",
+    // Email Routing must be enabled for this subdomain with subaddressing on (see README).
+    "INBOUND_DOMAIN": "statements.leadbase.stream",
     "INBOUND_LOCAL_PART": "stmt",
     // "log" prints outgoing mail to the console; "resend" sends through Resend (needs RESEND_API_KEY secret).
     "MAILER": "log",
-    "MAIL_FROM": "Family Money <money@example.com>",
+    "MAIL_FROM": "Family Money <money@statements.leadbase.stream>",
     // Raw statement emails are deleted from R2 after this many days.
     "RAW_MAIL_RETENTION_DAYS": "90"
   },
@@ -51,7 +57,7 @@
   //   "consumers": [{ "queue": "personal-expense-parse", "max_batch_size": 5, "max_retries": 3 }]
   // },
 
-  // Email Routing: route `stmt+*@yourdomain` to this Worker in the Cloudflare dashboard.
+  // Email Routing: a rule for stmt@statements.leadbase.stream sends mail to this Worker.
 
   "triggers": {
     // Nightly housekeeping at 03:10 UTC: recurring rules, insights, forecast (later phases), raw-mail retention.

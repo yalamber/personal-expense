@@ -41,10 +41,9 @@ npx wrangler d1 migrations apply "$DB_NAME" --remote
 
 say "Done. Next:"
 cat <<'EOF'
-  1. Set the secret:        npx wrangler secret put AUTH_SECRET
-     (and RESEND_API_KEY if MAILER=resend)
-  2. Edit wrangler.jsonc vars: INBOUND_DOMAIN, MAIL_FROM, MAILER
-  3. Deploy:                npm run deploy  (or connect the repo in Workers Builds)
-  4. In the Cloudflare dashboard, Email > Email Routing for INBOUND_DOMAIN:
-     add a rule (or catch-all) that sends stmt+*@<domain> to the Worker "personal-expense".
+  1. Edit wrangler.jsonc: routes (custom domain), INBOUND_DOMAIN, MAIL_FROM, MAILER
+  2. Deploy:                npm run deploy  (or connect the repo in Workers Builds)
+  3. Email Routing: enable INBOUND_DOMAIN, turn on subaddressing, and add a rule
+     stmt@<INBOUND_DOMAIN> -> Worker "personal-expense"
+  (AUTH_SECRET is optional; a secret is generated and stored in D1 when it is unset.)
 EOF

@@ -14,6 +14,16 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
 // ---------------------------------------------------------------------------
+// App-wide settings (one row per key), e.g. the generated session-signing secret
+// ---------------------------------------------------------------------------
+
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  createdAt: text("created_at").notNull().default(now),
+});
+
+// ---------------------------------------------------------------------------
 // Household and people
 // ---------------------------------------------------------------------------
 

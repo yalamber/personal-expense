@@ -29,7 +29,7 @@ the database, React + Vite for the web app. See `wrangler.jsonc` for bindings.
 
 ```sh
 npm install
-cp .dev.vars.example .dev.vars      # set AUTH_SECRET to any long random string
+cp .dev.vars.example .dev.vars      # keeps sign-in links on localhost
 npm run db:migrate:local            # applies migrations to the local D1
 npm run dev                         # builds the web app on change and runs wrangler dev on :8787
 ```
@@ -40,7 +40,7 @@ Open http://localhost:8787, enter an email, and copy the sign-in link from the t
 To try the email path locally, send a raw message to the local Email Worker:
 
 ```sh
-curl -X POST 'http://localhost:8787/cdn-cgi/handler/email?from=alerts@bank.example&to=stmt+<token>@example.com' \
+curl -X POST 'http://localhost:8787/cdn-cgi/handler/email?from=alerts@bank.example&to=stmt%2B<token>@statements.leadbase.stream' \
   --data-binary @test/fixtures/sample.eml
 ```
 
@@ -50,52 +50,63 @@ a few seconds.
 
 ## Deploying
 
-### Cloudflare resources (already created)
+### What is already set up in Cloudflare
 
 | Resource | Name | Notes |
 | --- | --- | --- |
-| D1 database | `personal-expense` | id `eddba7ce-aa58-43c2-891e-7a6e1a075757`, APAC; migration `0000_init.sql` applied |
+| D1 database | `personal-expense` | id `eddba7ce-aa58-43c2-891e-7a6e1a075757`, APAC; migrations `0000` and `0001` applied |
 | R2 bucket | `personal-expense-mail` | raw statement emails and attachments |
 
-To recreate them in another account, run `./scripts/cf-setup.sh` with wrangler logged in.
+| Address | Purpose |
+| --- | --- |
+| `https://money.leadbase.stream` | The app (custom domain, created on first deploy) |
+| `https://personal-expense.<your-subdomain>.workers.dev` | Fallback address |
+| `stmt+<household token>@statements.leadbase.stream` | Where each household forwards statements |
 
-### Automatic deploys from GitHub (Workers Builds)
+No secrets are required. The session-signing secret is generated on first use and stored in
+the `app_settings` table; set an `AUTH_SECRET` Worker secret only if you want to manage it.
 
-Cloudflare builds and deploys the repository itself; no CI workflow is needed.
+### Create the Worker with automatic deploys (one time)
 
-1. In the Cloudflare dashboard go to Workers & Pages › Create › Import a repository, connect
-   GitHub, and pick `yalamber/personal-expense`.
-2. Use these settings:
+1. Dashboard › Workers & Pages › Create › Import a repository › GitHub ›
+   `yalamber/personal-expense`.
+2. Settings:
 
    | Setting | Value |
    | --- | --- |
    | Project name | `personal-expense` (must match `name` in `wrangler.jsonc`) |
-   | Production branch | `main` |
+   | Production branch | `main`, or `claude/cool-archimedes-vk3kgg` until it is merged |
    | Build command | `npm run build` |
    | Deploy command | `npx wrangler deploy` |
-   | Root directory | `/` |
 
-3. After the first deploy, add the `AUTH_SECRET` secret under the Worker's Settings › Variables
-   and Secrets (any long random string, for example from `openssl rand -base64 32`). Until it is
-   set, the API answers 503 and `/api/health` reports `authConfigured: false`.
+3. Save and deploy. The first deploy creates `money.leadbase.stream`.
 
-Every push to the production branch then deploys. Pushes to other branches build preview versions.
+Every later push to the production branch deploys automatically.
 
-The default Workers Builds token has no D1 permission, so the deploy command does not run
-migrations. When a new file appears in `migrations/`, apply it before merging, either with
-`npm run db:migrate:remote` from a logged-in machine or through the Cloudflare connector.
+### Email Routing for statements (one time)
 
-### Email Routing
+1. Dashboard › Email Service › Email Routing › `leadbase.stream` › Settings:
+   - under **Subdomains**, add `statements.leadbase.stream`
+   - turn on **Subaddressing**
+2. Routing Rules › Create: custom address `stmt@statements.leadbase.stream`, action
+   **Send to a Worker**, Worker `personal-expense`.
 
-In the dashboard, open Email › Email Routing for the domain you want statements sent to, and
-add a rule (or catch-all) that sends `stmt+*@<domain>` to the Worker `personal-expense`. Then set
-`INBOUND_DOMAIN` in `wrangler.jsonc` to that domain so the app shows the right address.
+With subaddressing on, `stmt+<token>@statements.leadbase.stream` matches that one rule and the
+Worker reads the token. Email Routing must already be enabled on `leadbase.stream` to add a
+subdomain. If `leadbase.stream` itself receives mail through another provider, check that
+enabling Email Routing will not replace its MX records before you do it.
+
+### Migrations
+
+The default Workers Builds token has no D1 permission, so deploys do not run migrations. Apply a
+new file in `migrations/` before merging, with `npm run db:migrate:remote` from a logged-in
+machine or through the Cloudflare connector.
 
 ### Sign-in emails
 
 `MAILER` is `log`, so sign-in links are written to the Worker's logs (Workers › personal-expense ›
-Logs) rather than emailed. For real email, set `MAILER` to `resend`, set `MAIL_FROM` to a verified
-sender, and add a `RESEND_API_KEY` secret.
+Observability › Logs) rather than emailed. For real email, set `MAILER` to `resend`, set
+`MAIL_FROM` to a verified sender, and add a `RESEND_API_KEY` secret.
 
 ### Optional: parse on a Queue
 

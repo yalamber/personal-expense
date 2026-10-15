@@ -5,6 +5,7 @@ import type { AppEnv } from "../env";
 import { sha256Hex, sign, verify } from "../lib/crypto";
 import { isoInMinutes, newId, nowIso, randomToken } from "../lib/ids";
 import { sendMail } from "../lib/mailer";
+import { getAuthSecret } from "./secret";
 
 export const SESSION_COOKIE = "pe_session";
 const MAGIC_LINK_MINUTES = 15;
@@ -70,7 +71,7 @@ export async function redeemMagicLink(db: Db, env: AppEnv, token: string): Promi
     userId: user.id,
     expiresAt: new Date(Date.now() + SESSION_DAYS * 86_400_000).toISOString(),
   });
-  return sign(env.AUTH_SECRET, sessionId);
+  return sign(await getAuthSecret(db, env), sessionId);
 }
 
 export type SessionUser = { id: string; email: string; sessionId: string };
@@ -78,7 +79,7 @@ export type SessionUser = { id: string; email: string; sessionId: string };
 /** Resolves a signed session cookie to its user, or null. */
 export async function userFromCookie(db: Db, env: AppEnv, cookie: string | undefined): Promise<SessionUser | null> {
   if (!cookie) return null;
-  const sessionId = await verify(env.AUTH_SECRET, cookie);
+  const sessionId = await verify(await getAuthSecret(db, env), cookie);
   if (!sessionId) return null;
   const row = await db
     .select({ sessionId: schema.sessions.id, expiresAt: schema.sessions.expiresAt, id: schema.users.id, email: schema.users.email })
