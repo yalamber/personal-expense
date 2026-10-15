@@ -49,15 +49,28 @@ The queue consumer runs inside `wrangler dev`, so the row moves from `queued` to
 
 ## Deploying
 
-1. `npx wrangler d1 create personal-expense` and put the id in `wrangler.jsonc`.
-2. `npx wrangler r2 bucket create personal-expense-mail`
-3. `npx wrangler queues create personal-expense-parse` and `... personal-expense-parse-dlq`
-   (Queues need the Workers Paid plan).
-4. `npx wrangler secret put AUTH_SECRET`; for real email also `RESEND_API_KEY` and set
-   `MAILER` to `resend` plus `MAIL_FROM` and `APP_ORIGIN` in `wrangler.jsonc`.
-5. Set `INBOUND_DOMAIN` to a zone on Cloudflare DNS with Email Routing enabled, and add a
-   routing rule that sends `stmt+*@<domain>` (or a catch-all) to this Worker.
-6. `npm run db:migrate:remote` then `npm run deploy`.
+One-time setup, from a machine that is logged in (`npx wrangler login`) or has
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the environment:
+
+```sh
+./scripts/cf-setup.sh            # creates D1, R2, queues; writes the D1 id; applies migrations
+npx wrangler secret put AUTH_SECRET
+# for real email: npx wrangler secret put RESEND_API_KEY and set MAILER to "resend"
+```
+
+Then edit the `vars` in `wrangler.jsonc` (`APP_ORIGIN`, `INBOUND_DOMAIN`, `MAIL_FROM`),
+commit the D1 id the script wrote, and run `npm run deploy`.
+
+In the Cloudflare dashboard, open Email › Email Routing for the `INBOUND_DOMAIN` zone and add a
+rule (or a catch-all) that sends `stmt+*@<domain>` to the Worker named `personal-expense`.
+Queues need the Workers Paid plan; everything else fits the free allowances for one household.
+
+### Continuous deploys
+
+`.github/workflows/deploy.yml` type-checks, tests, applies migrations and deploys on every push
+to `main`. It needs two repository secrets: `CLOUDFLARE_API_TOKEN` (a token with Workers
+Scripts, D1, R2, Queues and Workers KV edit permissions) and `CLOUDFLARE_ACCOUNT_ID`.
+The one-time setup above still has to run once before the first workflow deploy.
 
 ## Scripts
 
