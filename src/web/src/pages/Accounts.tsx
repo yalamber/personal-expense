@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Account, type Household } from "../api";
+import { CsvImport } from "./CsvImport";
 
 export function Accounts({ household }: { household: Household }) {
   const [rows, setRows] = useState<Account[] | null>(null);
@@ -9,6 +10,7 @@ export function Accounts({ household }: { household: Household }) {
   const [pattern, setPattern] = useState("");
   const [isShared, setIsShared] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState<Account | null>(null);
   const canWrite = household.me.role !== "viewer";
 
   const load = useCallback(() => api.accounts(household.id).then(setRows).catch((e) => setError(String(e))), [household.id]);
@@ -44,7 +46,8 @@ export function Accounts({ household }: { household: Household }) {
               <th>Type</th>
               <th>Shared</th>
               <th>Statement senders</th>
-              <th>Last statement</th>
+              <th>CSV format</th>
+              {canWrite && <th />}
             </tr>
           </thead>
           <tbody>
@@ -54,12 +57,19 @@ export function Accounts({ household }: { household: Household }) {
                 <td>{a.type}</td>
                 <td>{a.isShared ? "yes" : "personal"}</td>
                 <td className="mono">{a.statementSenderPattern ?? <span className="muted">none, mail will be quarantined</span>}</td>
-                <td className="muted">{a.lastStatementAt ? new Date(a.lastStatementAt).toLocaleDateString() : "never"}</td>
+                <td className="muted">{a.csvMapping ? "mapped" : "not mapped yet"}</td>
+                {canWrite && (
+                  <td>
+                    <button type="button" className="secondary" onClick={() => setImporting(a)}>
+                      Import CSV
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
             {rows?.length === 0 && (
               <tr>
-                <td colSpan={5} className="muted">
+                <td colSpan={6} className="muted">
                   No accounts yet.
                 </td>
               </tr>
@@ -68,7 +78,19 @@ export function Accounts({ household }: { household: Household }) {
         </table>
       </div>
 
-      {canWrite && (
+      {importing && (
+        <CsvImport
+          household={household}
+          account={importing}
+          onCancel={() => setImporting(null)}
+          onDone={() => {
+            setImporting(null);
+            void load();
+          }}
+        />
+      )}
+
+      {canWrite && !importing && (
         <form className="card stack" onSubmit={submit}>
           <h2>Add an account</h2>
           <div className="row">

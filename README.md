@@ -8,17 +8,19 @@ design canvas that this repository was started from. This README covers running 
 
 ## Status
 
-Phase 0 of the roadmap: foundations.
+**Phase 0, foundations: done.** Worker, D1 schema, magic-link sign-in, households and roles,
+the Email Worker storing forwarded mail in R2, the statement inbox, nightly housekeeping.
 
-- Cloudflare Worker with Hono API, D1 schema (Drizzle) and migrations
-- Magic-link sign-in, households, members with roles, accounts
-- Email Worker that stores forwarded bank mail in R2 and dispatches it for parsing
-- Parser step that extracts attachments and routes to a parser registry (none registered yet);
-  it runs right after delivery, or on a Queue if one is bound
-- Web shell: sign in, create household, statement inbox, accounts, members
-- Nightly cron that retries stuck emails and enforces raw-mail retention
+**Phase 1, ledger and ingestion: in progress.**
 
-Milestone: a forwarded bank email shows up in the admin inbox view.
+- Done: default two-level categories, quick add for expenses, income and transfers, merchant
+  memory (a category chosen once is reused for that merchant), month view with spending by
+  category against budgets, monthly budgets with copy-from-last-month, CSV import with a
+  per-account column mapping, CSV attachments on forwarded emails read with that mapping,
+  duplicate detection against existing transactions, a review queue with live suggestions,
+  CSV export, and personal transactions that others see only as an amount.
+- Next: bank-specific email parsers (needs three sample emails per bank), recurring rules,
+  statement balance reconciliation, history backfill.
 
 ## Stack
 
@@ -54,7 +56,7 @@ a few seconds.
 
 | Resource | Name | Notes |
 | --- | --- | --- |
-| D1 database | `personal-expense` | id `eddba7ce-aa58-43c2-891e-7a6e1a075757`, APAC; migrations `0000` and `0001` applied |
+| D1 database | `personal-expense` | id `eddba7ce-aa58-43c2-891e-7a6e1a075757`, APAC; migrations `0000` to `0002` applied |
 | R2 bucket | `personal-expense-mail` | raw statement emails and attachments |
 
 | Address | Purpose |
@@ -131,19 +133,25 @@ needs the Workers Paid plan and a build token with Queues edit permission.
 ## Layout
 
 ```
-src/worker/          Worker: API, email handler, queue consumer, cron
+src/shared/          Pure helpers used by both sides: money, dates, CSV, column mapping, merchant names
+src/worker/          Worker: API, email handler, parse step, cron
   db/schema.ts       The whole data model
-  auth/              Magic links and sessions
-  http/              Hono app, middleware, routes
-  ingest/            Email Worker, queue consumer, parser registry
-  lib/               Pure helpers (unit-tested)
+  auth/              Magic links, sessions, generated signing secret
+  http/routes/       households, ledger (transactions, budgets, export), imports (CSV, review)
+  ledger/            Categories, merchant memory, transactions and transfers
+  ingest/            Email Worker, parse step, ingest pipeline, parser registry
+  lib/               Small Worker helpers
 src/web/             React web app (Vite root)
-migrations/          Drizzle-generated SQL applied by wrangler
+migrations/          Drizzle-generated SQL applied by wrangler or the Cloudflare connector
 test/                Vitest unit tests and email fixtures
 ```
 
-## Next: Phase 1
+## How imports work
 
-Quick add, categories and merchant memory; the first two bank parsers with fixture emails;
-dedupe, transfer pairing and statement balance reconciliation; the review queue; recurring
-rules and monthly budgets; history backfill; CSV import and export.
+1. A CSV arrives, either uploaded on the Accounts page or attached to a forwarded statement email.
+2. Its rows are read with the account's saved column mapping (set once, on the first upload).
+3. Each row's description is normalised to a merchant, and merchant memory supplies a category.
+4. A row is a likely duplicate when the same account already has a transaction with the same
+   amount and direction within two days.
+5. Rows with a known category and no likely duplicate are posted. Everything else waits in
+   Review, where one decision also teaches the merchant's category to every similar line.

@@ -2,10 +2,13 @@ import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
 import { schema } from "../../db";
 import { dispatchParse } from "../../ingest/dispatch";
+import { ensureCategories } from "../../ledger/categories";
 import { inboundAddressFor } from "../../lib/inbound";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
 import { readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
+import { importRoutes } from "./imports";
+import { ledgerRoutes } from "./ledger";
 
 export const householdRoutes = new Hono<HonoEnv>();
 
@@ -51,6 +54,7 @@ householdRoutes.post("/households", async (c) => {
     role: "admin",
     joinedAt: nowIso(),
   });
+  await ensureCategories(db, householdId);
   return c.json({ id: householdId }, 201);
 });
 
@@ -109,7 +113,7 @@ scoped.post("/members", requireAdmin, async (c) => {
 
 scoped.get("/accounts", async (c) => {
   const rows = await c.get("db").query.accounts.findMany({ where: eq(schema.accounts.householdId, c.get("household").id) });
-  return c.json(rows);
+  return c.json(rows.map((r) => ({ ...r, csvMapping: r.csvMapping ? (JSON.parse(r.csvMapping) as unknown) : null })));
 });
 
 scoped.post("/accounts", requireWriter, async (c) => {
@@ -189,5 +193,8 @@ scoped.post("/statements/:statementId/release", requireAdmin, async (c) => {
   await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
   return c.json({ ok: true });
 });
+
+scoped.route("/", ledgerRoutes);
+scoped.route("/", importRoutes);
 
 householdRoutes.route("/households/:householdId", scoped);

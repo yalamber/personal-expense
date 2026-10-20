@@ -1,7 +1,8 @@
 /**
- * Queue consumer: takes a stored statement email, extracts its metadata and attachments
- * into R2, and hands it to a matching parser. With no parser registered (Phase 0) the
- * email is marked `unparsed` and still visible in the inbox, which is the Phase 0 milestone.
+ * Parse step for a stored statement email: extracts attachments into R2, then reads lines with a
+ * bank-specific parser, or with the account's saved CSV mapping when the email carries a CSV
+ * attachment. Lines go through the ingest pipeline (merchant memory, duplicate check, auto-post or
+ * review). Emails nothing can read are marked `unparsed` and stay visible in the inbox.
  */
 import { eq } from "drizzle-orm";
 import PostalMime from "postal-mime";
@@ -9,7 +10,10 @@ import { getDb, schema } from "../db";
 import type { AppEnv, ParseJob } from "../env";
 import { nowIso } from "../lib/ids";
 import { isBlockedAttachment, rawMailKeys } from "../lib/inbound";
+import { parseCsv } from "../../shared/csv";
+import { applyMapping, isCsvMapping } from "../../shared/csv-mapping";
 import { findParser } from "./parsers";
+import { ingestLines, refreshStatementStatus, type IncomingLine } from "./pipeline";
 
 type StoredAttachment = { filename: string; mimeType: string; size: number; r2Key: string };
 
@@ -57,64 +61,61 @@ export async function processStatementEmail(job: ParseJob, env: AppEnv): Promise
   }
 
   const subject = email.subject ?? row.subject ?? "";
+  const base = { subject, messageId: row.messageId ?? email.messageId ?? null, attachments: JSON.stringify(stored) };
   const parser = findParser({ from: row.fromAddress, subject });
 
-  if (!parser) {
+  // Without a bank-specific parser, a CSV attachment can still be read with the account's saved mapping.
+  const csvAttachments = forParser.filter((a) => /\.csv$/i.test(a.filename) || /csv/i.test(a.mimeType));
+  const account = row.accountId ? await db.query.accounts.findFirst({ where: eq(schema.accounts.id, row.accountId) }) : undefined;
+  const savedMapping = account?.csvMapping ? (JSON.parse(account.csvMapping) as unknown) : null;
+  const mapping = isCsvMapping(savedMapping) ? savedMapping : null;
+
+  if (!parser && !(csvAttachments.length && mapping)) {
+    const reason = csvAttachments.length
+      ? "this email has a CSV attachment; map the CSV columns for the account once and later emails import automatically"
+      : "no parser matches this sender and subject yet";
     await db
       .update(schema.statementEmails)
-      .set({
-        subject,
-        messageId: row.messageId ?? email.messageId ?? null,
-        attachments: JSON.stringify(stored),
-        status: "unparsed",
-        error: "no parser matches this sender and subject yet",
-        processedAt: nowIso(),
-      })
+      .set({ ...base, status: "unparsed", error: reason, processedAt: nowIso() })
       .where(eq(schema.statementEmails.id, row.id));
     return;
   }
 
+  const parserKey = parser ? parser.key : "csv-mapping";
   try {
-    const lines = await parser.parse(email, forParser);
-    if (lines.length) {
-      await db.insert(schema.importLines).values(
-        lines.map((l) => ({
-          id: crypto.randomUUID(),
-          householdId: row.householdId,
-          statementEmailId: row.id,
-          rawText: l.rawText,
-          parsedDate: l.date,
-          parsedAmountMinor: l.kind === "out" ? -Math.abs(l.amountMinor) : Math.abs(l.amountMinor),
-          parsedDescription: l.description,
-          confidence: Math.round(l.confidence),
-          decision: "pending" as const,
+    let lines: IncomingLine[];
+    if (parser) {
+      lines = (await parser.parse(email, forParser)).map((l) => ({
+        rawText: l.rawText,
+        date: l.date,
+        amountMinor: Math.abs(l.amountMinor),
+        direction: l.kind,
+        description: l.description,
+        confidence: l.confidence,
+      }));
+    } else {
+      const household = await db.query.households.findFirst({ where: eq(schema.households.id, row.householdId) });
+      const currency = household?.currency ?? "USD";
+      lines = csvAttachments.flatMap((a) =>
+        applyMapping(parseCsv(new TextDecoder().decode(a.bytes)), mapping!, currency).rows.map((r) => ({
+          rawText: r.raw,
+          date: r.date,
+          amountMinor: r.amountMinor,
+          direction: r.direction,
+          description: r.description,
+          confidence: 95,
         })),
       );
     }
-    // Matching, categorisation and auto-posting arrive in Phase 1; until then every line waits for review.
-    await db
-      .update(schema.statementEmails)
-      .set({
-        subject,
-        attachments: JSON.stringify(stored),
-        parserKey: parser.key,
-        status: lines.length ? "review" : "done",
-        error: null,
-        processedAt: nowIso(),
-      })
-      .where(eq(schema.statementEmails.id, row.id));
+
+    await db.update(schema.statementEmails).set({ ...base, parserKey, error: null }).where(eq(schema.statementEmails.id, row.id));
+    await ingestLines(db, { householdId: row.householdId, statementEmailId: row.id, accountId: row.accountId, source: "email" }, lines);
+    await refreshStatementStatus(db, row.id, "parsed");
   } catch (err) {
     await db
       .update(schema.statementEmails)
-      .set({
-        subject,
-        attachments: JSON.stringify(stored),
-        parserKey: parser.key,
-        status: "failed",
-        error: err instanceof Error ? err.message : String(err),
-        processedAt: nowIso(),
-      })
+      .set({ ...base, parserKey, status: "failed", error: err instanceof Error ? err.message : String(err), processedAt: nowIso() })
       .where(eq(schema.statementEmails.id, row.id));
-    throw err; // let the queue retry, then dead-letter
+    throw err; // the queue retries (a no-op once failed); inline and cron callers log it
   }
 }

@@ -95,6 +95,8 @@ export const accounts = sqliteTable(
      * Several patterns may be separated by commas. Mail from anyone else is quarantined.
      */
     statementSenderPattern: text("statement_sender_pattern"),
+    /** JSON CsvMapping (src/shared/csv-mapping.ts) for this bank's CSV export, once mapped. */
+    csvMapping: text("csv_mapping"),
     lastStatementBalanceMinor: integer("last_statement_balance_minor"),
     lastStatementAt: text("last_statement_at"),
     createdAt: text("created_at").notNull().default(now),
@@ -113,7 +115,7 @@ export const categories = sqliteTable(
     householdId: text("household_id").notNull().references(() => households.id),
     parentId: text("parent_id"),
     name: text("name").notNull(),
-    kind: text("kind", { enum: ["need", "want", "saving", "transfer"] }).notNull().default("want"),
+    kind: text("kind", { enum: ["need", "want", "saving", "transfer", "income"] }).notNull().default("want"),
     sort: integer("sort").notNull().default(0),
   },
   (t) => [index("categories_household").on(t.householdId)],
@@ -146,6 +148,8 @@ export const transactions = sqliteTable(
     merchantId: text("merchant_id").references(() => merchants.id),
     categoryId: text("category_id").references(() => categories.id),
     paidByMemberId: text("paid_by_member_id").references(() => members.id),
+    /** The description as the bank or the person wrote it, before merchant normalisation. */
+    description: text("description"),
     isPersonal: integer("is_personal", { mode: "boolean" }).notNull().default(false),
     source: text("source", { enum: ["manual", "email", "csv", "recurring"] }).notNull(),
     importLineId: text("import_line_id"),
@@ -160,6 +164,7 @@ export const transactions = sqliteTable(
   (t) => [
     index("transactions_household_date").on(t.householdId, t.date),
     index("transactions_dedupe").on(t.householdId, t.dedupeHash),
+    index("transactions_account_date").on(t.accountId, t.date),
   ],
 );
 
