@@ -75,13 +75,14 @@ the `app_settings` table; set an `AUTH_SECRET` Worker secret only if you want to
    | Setting | Value |
    | --- | --- |
    | Project name | `personal-expense` (must match `name` in `wrangler.jsonc`) |
-   | Production branch | `main`, or `claude/cool-archimedes-vk3kgg` until it is merged |
+   | Production branch | `main` |
    | Build command | `npm run build` |
    | Deploy command | `npx wrangler deploy` |
 
 3. Save and deploy. The first deploy creates `money.leadbase.stream`.
 
-Every later push to the production branch deploys automatically.
+Every later push to `main` deploys automatically. All feature work happens on `main`; pushes to
+any other branch only build preview versions.
 
 ### Email Routing for statements (one time)
 
