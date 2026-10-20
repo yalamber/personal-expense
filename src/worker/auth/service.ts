@@ -4,7 +4,7 @@ import { schema } from "../db";
 import type { AppEnv } from "../env";
 import { sha256Hex, sign, verify } from "../lib/crypto";
 import { isoInMinutes, newId, nowIso, randomToken } from "../lib/ids";
-import { sendMail } from "../lib/mailer";
+import { sendMail, type MailError } from "../lib/mailer";
 import { getAuthSecret } from "./secret";
 
 export const SESSION_COOKIE = "pe_session";
@@ -34,11 +34,17 @@ export async function requestMagicLink(db: Db, env: AppEnv, rawEmail: string, re
   });
   const origin = (env.APP_ORIGIN || requestOrigin).replace(/\/+$/, "");
   const url = `${origin}/api/auth/callback?token=${encodeURIComponent(token)}`;
-  await sendMail(env, {
-    to: email,
-    subject: "Your sign-in link",
-    text: `Open this link within ${MAGIC_LINK_MINUTES} minutes to sign in:\n\n${url}\n\nIf you did not ask for it, ignore this email.`,
-  });
+  try {
+    await sendMail(env, {
+      to: email,
+      subject: "Your Family Money sign-in link",
+      text: `Open this link within ${MAGIC_LINK_MINUTES} minutes to sign in:\n\n${url}\n\nIf you did not ask for it, ignore this email.`,
+    });
+  } catch (err) {
+    // The link expires in minutes and works once; logging it lets an admin get in while email is being set up.
+    console.error(`[mail:failed] to=${email} code=${(err as MailError).code ?? "unknown"} ${(err as Error).message}\nsign-in link: ${url}`);
+    throw err;
+  }
 }
 
 /**

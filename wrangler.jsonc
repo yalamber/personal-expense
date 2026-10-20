@@ -26,9 +26,11 @@
     // Email Routing must be enabled for this subdomain with subaddressing on (see README).
     "INBOUND_DOMAIN": "statements.leadbase.stream",
     "INBOUND_LOCAL_PART": "stmt",
-    // "log" prints outgoing mail to the console; "resend" sends through Resend (needs RESEND_API_KEY secret).
-    "MAILER": "log",
-    "MAIL_FROM": "Family Money <money@statements.leadbase.stream>",
+    // How sign-in emails go out: "cloudflare" uses the send_email binding below, "resend" uses
+    // Resend (RESEND_API_KEY secret), "log" only writes them to the Worker log (local development).
+    "MAILER": "cloudflare",
+    // Must be an address on a domain with Cloudflare Email Routing enabled.
+    "MAIL_FROM": "Family Money <money@leadbase.stream>",
     // Raw statement emails are deleted from R2 after this many days.
     "RAW_MAIL_RETENTION_DAYS": "90"
   },
@@ -56,6 +58,11 @@
   //   "producers": [{ "binding": "PARSE_QUEUE", "queue": "personal-expense-parse" }],
   //   "consumers": [{ "queue": "personal-expense-parse", "max_batch_size": 5, "max_retries": 3 }]
   // },
+
+  // Outgoing email through Cloudflare Email Service. On the Workers Free plan it delivers only to
+  // addresses verified under Email Routing > Destination addresses (free). Onboarding the domain
+  // for Email Sending (Workers Paid) lifts that restriction.
+  "send_email": [{ "name": "EMAIL" }],
 
   // Email Routing: a rule for stmt@statements.leadbase.stream sends mail to this Worker.
 

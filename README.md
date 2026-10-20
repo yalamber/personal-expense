@@ -107,9 +107,20 @@ machine or through the Cloudflare connector.
 
 ### Sign-in emails
 
-`MAILER` is `log`, so sign-in links are written to the Worker's logs (Workers › personal-expense ›
-Observability › Logs) rather than emailed. For real email, set `MAILER` to `resend`, set
-`MAIL_FROM` to a verified sender, and add a `RESEND_API_KEY` secret.
+Sign-in links are sent with Cloudflare Email Service through the Worker's `send_email` binding
+(`MAILER` is `cloudflare`), from `MAIL_FROM` (`money@leadbase.stream`). Two things must be set up
+in the Cloudflare dashboard, both free:
+
+1. Email Routing enabled on `leadbase.stream` (Email Service › Email Routing), because the sending
+   address must be on a routing domain.
+2. Each family member's address added and verified under Email Routing › Destination addresses.
+   On the Workers Free plan Cloudflare only delivers to verified addresses. Onboarding the domain
+   for Email Sending (Workers Paid) lets the app email anyone.
+
+If a send fails, the sign-in form says so, and the Worker log keeps a `[mail:failed]` line with
+the one-time link so an admin can still get in. For local development `.dev.vars` sets
+`MAILER=log`, which prints links to the terminal. `MAILER=resend` with a `RESEND_API_KEY`
+secret is also supported.
 
 ### Optional: parse on a Queue
 

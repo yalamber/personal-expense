@@ -4,6 +4,9 @@
 # wrangler.jsonc; this keeps sign-in links pointing at your local server.
 APP_ORIGIN=http://localhost:8787
 
+# Print sign-in emails to the terminal instead of sending them.
+MAILER=log
+
 # Optional. Without it a signing secret is generated and stored in the local D1.
 # AUTH_SECRET=change-me-to-a-long-random-string
 
