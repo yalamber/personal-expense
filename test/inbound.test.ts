@@ -7,6 +7,7 @@ import {
   rawMailKeys,
   safeFilename,
   senderMatches,
+  forwardingCheck,
 } from "../src/worker/lib/inbound";
 
 describe("parseInboundAddress", () => {
@@ -76,5 +77,23 @@ describe("helpers", () => {
     expect(isBlockedAttachment("evil.exe", "application/octet-stream")).toBe(true);
     expect(isBlockedAttachment("statement.pdf", "application/pdf")).toBe(false);
     expect(isBlockedAttachment("x.bin", "application/x-msdownload")).toBe(true);
+  });
+});
+
+describe("forwardingCheck", () => {
+  it("reads Gmail's confirmation code and requester from the subject", () => {
+    const r = forwardingCheck("Gmail Team <forwarding-noreply@google.com>", "(#572612094) Gmail Forwarding Confirmation - Receive Mail from asha.k@gmail.com");
+    expect(r).toEqual({ provider: "gmail", code: "572612094", link: null, requester: "asha.k@gmail.com" });
+  });
+
+  it("finds the code and link in the body when the subject is translated", () => {
+    const body = "Confirmation code: 572612094\nTo allow this, click https://mail-settings.google.com/mail/vf-%5BANGjdJ8x%5D-abc123 to confirm.";
+    const r = forwardingCheck("forwarding-noreply@google.com", "Confirmación de reenvío de Gmail", body);
+    expect(r?.code).toBe("572612094");
+    expect(r?.link).toBe("https://mail-settings.google.com/mail/vf-%5BANGjdJ8x%5D-abc123");
+  });
+
+  it("ignores everyone else", () => {
+    expect(forwardingCheck("alerts@bank.example", "(#572612094) Gmail Forwarding Confirmation")).toBeNull();
   });
 });

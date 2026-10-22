@@ -3,21 +3,23 @@
  *
  * For each line:
  *   1. normalise the description to a merchant (merchant memory supplies a category)
- *   2. look for an existing transaction on the same account with the same amount and direction
+ *   2. look for existing transactions on the same account with the same amount and direction
  *      within two days (an alert followed by the statement, or a manual entry)
- *   3. auto-post when there is no likely duplicate and the merchant already has a category;
- *      otherwise leave the line for a person in the review queue
+ *   3. when exactly one manual entry fits and the bank has not confirmed it yet, the line is the
+ *      bank's copy of it: merge (the entry is now confirmed, nothing new is added)
+ *   4. when other candidates fit, ask the family (Decide); otherwise auto-post when the merchant
+ *      already has a category, or ask for one
  *
  * Query budget: merchants and duplicate candidates are loaded once, new merchants are created
  * one at a time, and all inserts go out in batches, which keeps large CSV imports well inside
  * the Workers request limits.
  */
-import { and, between, count, eq } from "drizzle-orm";
+import { and, between, count, eq, isNull } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { schema, type Db } from "../db";
 import { newId, nowIso } from "../lib/ids";
 import { loadMerchantIndex, resolveMerchant } from "../ledger/merchants";
-import { findDuplicate, loadDedupeCandidates, transactionValues } from "../ledger/transactions";
+import { classifyLine, loadDedupeCandidates, transactionValues } from "../ledger/transactions";
 
 export type IncomingLine = {
   rawText: string;
@@ -31,7 +33,8 @@ export type IncomingLine = {
 };
 
 /** alreadyQueued counts lines skipped because the exact same line is already waiting in the review queue. */
-export type IngestResult = { total: number; autoPosted: number; needsReview: number; duplicates: number; alreadyQueued: number };
+/** confirmed counts lines that matched a manual entry and confirmed it instead of adding a copy. */
+export type IngestResult = { total: number; autoPosted: number; confirmed: number; needsReview: number; duplicates: number; alreadyQueued: number };
 
 const AUTO_POST_MIN_CONFIDENCE = 80;
 const BATCH_SIZE = 40;
@@ -41,7 +44,7 @@ export async function ingestLines(
   ctx: { householdId: string; statementEmailId: string; accountId: string | null; source: "email" | "csv" },
   lines: IncomingLine[],
 ): Promise<IngestResult> {
-  const result: IngestResult = { total: lines.length, autoPosted: 0, needsReview: 0, duplicates: 0, alreadyQueued: 0 };
+  const result: IngestResult = { total: lines.length, autoPosted: 0, confirmed: 0, needsReview: 0, duplicates: 0, alreadyQueued: 0 };
   if (!lines.length) return result;
 
   const merchants = await loadMerchantIndex(db, ctx.householdId);
@@ -73,12 +76,43 @@ export async function ingestLines(
       continue;
     }
     const merchant = await resolveMerchant(db, ctx.householdId, line.description, merchants);
-    const duplicate = ctx.accountId ? findDuplicate(candidates, { accountId: ctx.accountId, date: line.date, amountMinor: line.amountMinor, direction: line.direction }, claimed) : null;
+    const match = ctx.accountId
+      ? classifyLine(candidates, { accountId: ctx.accountId, date: line.date, amountMinor: line.amountMinor, direction: line.direction }, claimed)
+      : ({ kind: "none" } as const);
+    const lineId = newId();
+
+    if (match.kind === "confirm" && line.confidence >= AUTO_POST_MIN_CONFIDENCE) {
+      claimed.add(match.match.id);
+      const at = nowIso();
+      statements.push(
+        db.insert(schema.importLines).values({
+          id: lineId,
+          householdId: ctx.householdId,
+          statementEmailId: ctx.statementEmailId,
+          rawText: line.rawText.slice(0, 500),
+          parsedDate: line.date,
+          parsedAmountMinor: line.direction === "out" ? -line.amountMinor : line.amountMinor,
+          parsedDescription: line.description.slice(0, 200),
+          confidence: Math.round(line.confidence),
+          suggestedCategoryId: merchant.defaultCategoryId,
+          matchTransactionId: match.match.id,
+          decision: "merged",
+          decidedAt: at,
+        }),
+        db
+          .update(schema.transactions)
+          .set({ confirmedAt: at, confirmedLineId: lineId })
+          .where(and(eq(schema.transactions.id, match.match.id), isNull(schema.transactions.confirmedAt))),
+      );
+      result.confirmed++;
+      continue;
+    }
+
+    const duplicate = match.kind === "none" ? null : match.match;
     if (duplicate) claimed.add(duplicate.id);
 
     const categoryId = merchant.defaultCategoryId;
     const canAutoPost = Boolean(ctx.accountId && !duplicate && categoryId && line.confidence >= AUTO_POST_MIN_CONFIDENCE);
-    const lineId = newId();
     const confidence = duplicate ? Math.min(line.confidence, 50) : categoryId ? line.confidence : Math.min(line.confidence, 60);
 
     statements.push(

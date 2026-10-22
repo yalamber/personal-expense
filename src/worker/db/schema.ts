@@ -97,8 +97,14 @@ export const accounts = sqliteTable(
     statementSenderPattern: text("statement_sender_pattern"),
     /** JSON CsvMapping (src/shared/csv-mapping.ts) for this bank's CSV export, once mapped. */
     csvMapping: text("csv_mapping"),
+    /** Balance the bank showed most recently (from a statement or typed in) and its date. */
     lastStatementBalanceMinor: integer("last_statement_balance_minor"),
     lastStatementAt: text("last_statement_at"),
+    /** Balance the book starts from: the bank's figure at the end of this date. */
+    openingBalanceMinor: integer("opening_balance_minor"),
+    openingBalanceDate: text("opening_balance_date"),
+    /** A balance question someone chose to look at later, keyed by the statement date it was about. */
+    balanceSnoozedFor: text("balance_snoozed_for"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("accounts_household").on(t.householdId)],
@@ -158,6 +164,15 @@ export const transactions = sqliteTable(
     /** Both sides of a transfer between own accounts share this id. */
     transferPairId: text("transfer_pair_id"),
     note: text("note"),
+    /**
+     * When a bank statement or alert confirmed this transaction. Lines that arrive from the bank are
+     * confirmed when posted; a manual entry is confirmed when a matching bank line turns up.
+     */
+    confirmedAt: text("confirmed_at"),
+    /** The import line that confirmed a manual entry. */
+    confirmedLineId: text("confirmed_line_id"),
+    /** Set when this transaction is money moved toward a goal. */
+    goalId: text("goal_id"),
     voidedAt: text("voided_at"),
     createdAt: text("created_at").notNull().default(now),
   },
@@ -225,20 +240,44 @@ export const budgets = sqliteTable(
   (t) => [uniqueIndex("budgets_household_cat_month").on(t.householdId, t.categoryId, t.month)],
 );
 
+export const goalKinds = ["safety", "purchase", "build", "education", "other"] as const;
+
 export const goals = sqliteTable(
   "goals",
   {
     id: text("id").primaryKey(),
     householdId: text("household_id").notNull().references(() => households.id),
     name: text("name").notNull(),
+    kind: text("kind", { enum: goalKinds }).notNull().default("other"),
+    /** Sum of the parts when the goal has parts; otherwise typed in. */
     targetMinor: integer("target_minor").notNull(),
+    /** The month the family wants it by, YYYY-MM-DD (first of the month). */
     targetDate: text("target_date"),
+    /** Lower comes first; money rolls from a finished goal to the next one in this order. */
     priority: integer("priority").notNull().default(0),
     linkedAccountId: text("linked_account_id").references(() => accounts.id),
     monthlyPlanMinor: integer("monthly_plan_minor"),
+    note: text("note"),
+    completedAt: text("completed_at"),
+    archivedAt: text("archived_at"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("goals_household").on(t.householdId)],
+);
+
+/** What a goal's target is made of: cost items for a purchase, stages in order for a build. */
+export const goalParts = sqliteTable(
+  "goal_parts",
+  {
+    id: text("id").primaryKey(),
+    householdId: text("household_id").notNull().references(() => households.id),
+    goalId: text("goal_id").notNull().references(() => goals.id),
+    name: text("name").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+    sort: integer("sort").notNull().default(0),
+    doneAt: text("done_at"),
+  },
+  (t) => [index("goal_parts_goal").on(t.goalId)],
 );
 
 export const goalContributions = sqliteTable(
@@ -247,8 +286,11 @@ export const goalContributions = sqliteTable(
     id: text("id").primaryKey(),
     goalId: text("goal_id").notNull().references(() => goals.id),
     date: text("date").notNull(),
+    /** Positive adds to the goal, negative takes money out (for example, paying a stage). */
     amountMinor: integer("amount_minor").notNull(),
     transactionId: text("transaction_id").references(() => transactions.id),
+    note: text("note"),
+    memberId: text("member_id").references(() => members.id),
   },
   (t) => [index("goal_contributions_goal").on(t.goalId)],
 );
@@ -265,6 +307,7 @@ export const statementEmailStatus = [
   "review", // some import lines need a human decision
   "done", // every line decided
   "failed", // parser threw; raw kept, admin notified
+  "forwarding", // a mail provider asking to confirm forwarding; the code is kept in verify_code
 ] as const;
 
 export const statementEmails = sqliteTable(
@@ -287,6 +330,8 @@ export const statementEmails = sqliteTable(
     parserKey: text("parser_key"),
     status: text("status", { enum: statementEmailStatus }).notNull().default("received"),
     error: text("error"),
+    /** Confirmation code from a forwarding check (for example Gmail's), shown to the family. */
+    verifyCode: text("verify_code"),
     processedAt: text("processed_at"),
   },
   (t) => [
@@ -309,7 +354,8 @@ export const importLines = sqliteTable(
     confidence: integer("confidence").notNull().default(0),
     suggestedCategoryId: text("suggested_category_id").references(() => categories.id),
     matchTransactionId: text("match_transaction_id").references(() => transactions.id),
-    decision: text("decision", { enum: ["pending", "auto", "accepted", "rejected"] }).notNull().default("pending"),
+    /** merged: the line was the bank's copy of a transaction already in the book (match_transaction_id). */
+    decision: text("decision", { enum: ["pending", "auto", "accepted", "rejected", "merged"] }).notNull().default("pending"),
     decidedByMemberId: text("decided_by_member_id").references(() => members.id),
     decidedAt: text("decided_at"),
   },

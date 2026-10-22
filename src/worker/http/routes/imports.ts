@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { parseCsv } from "../../../shared/csv";
 import { applyMapping, isCsvMapping, type CsvMapping } from "../../../shared/csv-mapping";
 import { schema } from "../../db";
@@ -146,36 +146,47 @@ async function loadPending(c: AppContext, ids: string[]): Promise<PendingLine[]>
   return rows.map((r) => ({ ...r.line, accountId: r.accountId, fromAddress: r.fromAddress }));
 }
 
-/** Posts a pending line as a transaction (teaching merchant memory) and marks it accepted. */
-async function acceptLine(c: AppContext, line: PendingLine, categoryId: string | null): Promise<void> {
+type LineOverrides = { description?: string; note?: string | null; paidByMemberId?: string | null };
+
+/**
+ * Posts a pending line as a transaction (teaching merchant memory) and marks it accepted. When a
+ * person logs the same payment by hand, their name for it, note and payer ride along.
+ */
+async function acceptLine(c: AppContext, line: PendingLine, categoryId: string | null, overrides: LineOverrides = {}): Promise<string> {
   const db = c.get("db");
   const householdId = c.get("household").id;
   if (!line.accountId) throw new Error("this line's statement has no account");
-  const description = line.parsedDescription ?? "(no description)";
+  const bankDescription = line.parsedDescription ?? "(no description)";
+  const description = overrides.description?.trim() || bankDescription;
   const merchant = await resolveMerchant(db, householdId, description);
   const chosen = categoryId ?? line.suggestedCategoryId ?? merchant.defaultCategoryId;
-  if (categoryId) await rememberCategory(db, merchant.id, categoryId);
+  if (categoryId) {
+    await rememberCategory(db, merchant.id, categoryId);
+    if (description !== bankDescription) await rememberCategory(db, (await resolveMerchant(db, householdId, bankDescription)).id, categoryId);
+  }
   const amount = line.parsedAmountMinor ?? 0;
+  const values = transactionValues({
+    householdId,
+    accountId: line.accountId,
+    date: line.parsedDate ?? nowIso().slice(0, 10),
+    amountMinor: Math.abs(amount),
+    direction: amount < 0 ? "out" : "in",
+    merchantId: merchant.id,
+    categoryId: chosen,
+    description,
+    note: overrides.note ?? null,
+    paidByMemberId: overrides.paidByMemberId ?? null,
+    source: line.fromAddress.startsWith("upload:") ? "csv" : "email",
+    importLineId: line.id,
+  });
   await db.batch([
-    db.insert(schema.transactions).values(
-      transactionValues({
-        householdId,
-        accountId: line.accountId,
-        date: line.parsedDate ?? nowIso().slice(0, 10),
-        amountMinor: Math.abs(amount),
-        direction: amount < 0 ? "out" : "in",
-        merchantId: merchant.id,
-        categoryId: chosen,
-        description,
-        source: line.fromAddress.startsWith("upload:") ? "csv" : "email",
-        importLineId: line.id,
-      }),
-    ),
+    db.insert(schema.transactions).values(values),
     db
       .update(schema.importLines)
       .set({ decision: "accepted", suggestedCategoryId: chosen, decidedByMemberId: c.get("member").id, decidedAt: nowIso() })
       .where(eq(schema.importLines.id, line.id)),
   ]);
+  return values.id!;
 }
 
 /** Accepts every pending line that has a suggested category and no likely duplicate. */
@@ -204,26 +215,67 @@ importRoutes.post("/review/accept-suggested", requireWriter, async (c) => {
   return c.json({ accepted });
 });
 
-/** Accept (optionally with a category) or reject one line. Rejecting a likely duplicate keeps the existing transaction. */
+/** Files several lines (one merchant's, usually) under one category in a single decision. */
+importRoutes.post("/review/accept-many", requireWriter, async (c) => {
+  const db = c.get("db");
+  const body = await readJson<{ lineIds?: string[]; categoryId?: string | null }>(c);
+  const ids = Array.isArray(body.lineIds) ? body.lineIds.filter((x) => typeof x === "string").slice(0, 200) : [];
+  if (!ids.length) return c.json({ error: "no lines given" }, 400);
+  if (body.categoryId) {
+    const cat = await db.query.categories.findFirst({ where: and(eq(schema.categories.id, body.categoryId), eq(schema.categories.householdId, c.get("household").id)), columns: { id: true } });
+    if (!cat) return c.json({ error: "category not found" }, 404);
+  }
+  const lines = await loadPending(c, ids);
+  const statements = new Set<string>();
+  let accepted = 0;
+  for (const line of lines) {
+    if (!line.accountId || line.matchTransactionId) continue;
+    await acceptLine(c, line, body.categoryId ?? null);
+    statements.add(line.statementEmailId);
+    accepted++;
+  }
+  for (const id of statements) await refreshStatementStatus(db, id);
+  return c.json({ accepted });
+});
+
+/**
+ * One line's decision:
+ *  - accept: post it (optionally with a category, and with a person's details when they logged it too)
+ *  - same: it is the bank's copy of the transaction it matched; confirm that one, add nothing
+ *  - reject: drop the line
+ */
 importRoutes.post("/review/:lineId", requireWriter, async (c) => {
-  const body = await readJson<{ action?: string; categoryId?: string | null }>(c);
+  const body = await readJson<{ action?: string; categoryId?: string | null; description?: string; note?: string; paidByMemberId?: string | null }>(c);
   const [line] = await loadPending(c, [c.req.param("lineId")]);
   if (!line) return c.json({ error: "not found or already decided" }, 404);
   if (body.categoryId) {
     const cat = await c.get("db").query.categories.findFirst({ where: and(eq(schema.categories.id, body.categoryId), eq(schema.categories.householdId, c.get("household").id)), columns: { id: true } });
     if (!cat) return c.json({ error: "category not found" }, 404);
   }
+  let transactionId: string | null = null;
   if (body.action === "accept") {
     try {
-      await acceptLine(c, line, body.categoryId ?? null);
+      transactionId = await acceptLine(c, line, body.categoryId ?? null, { description: body.description, note: body.note?.trim() || null, paidByMemberId: body.paidByMemberId ?? null });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "could not post this line" }, 409);
     }
+  } else if (body.action === "same") {
+    if (!line.matchTransactionId) return c.json({ error: "this line has nothing to be the same as" }, 409);
+    const at = nowIso();
+    await c.get("db").batch([
+      c
+        .get("db")
+        .update(schema.transactions)
+        .set({ confirmedAt: at, confirmedLineId: line.id })
+        .where(and(eq(schema.transactions.id, line.matchTransactionId), eq(schema.transactions.householdId, c.get("household").id), isNull(schema.transactions.confirmedAt))),
+      c.get("db").update(schema.importLines).set({ decision: "merged", decidedByMemberId: c.get("member").id, decidedAt: at }).where(eq(schema.importLines.id, line.id)),
+    ]);
+    transactionId = line.matchTransactionId;
   } else if (body.action === "reject") {
     await c.get("db").update(schema.importLines).set({ decision: "rejected", decidedByMemberId: c.get("member").id, decidedAt: nowIso() }).where(eq(schema.importLines.id, line.id));
   } else {
-    return c.json({ error: "action must be accept or reject" }, 400);
+    return c.json({ error: "action must be accept, same or reject" }, 400);
   }
   await refreshStatementStatus(c.get("db"), line.statementEmailId);
-  return c.json({ ok: true });
+  return c.json({ ok: true, transactionId });
 });

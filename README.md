@@ -11,16 +11,27 @@ design canvas that this repository was started from. This README covers running 
 **Phase 0, foundations: done.** Worker, D1 schema, magic-link sign-in, households and roles,
 the Email Worker storing forwarded mail in R2, the statement inbox, nightly housekeeping.
 
-**Phase 1, ledger and ingestion: in progress.**
+**Phase 1, ledger and ingestion: done, with the redesign.**
 
-- Done: default two-level categories, quick add for expenses, income and transfers, merchant
-  memory (a category chosen once is reused for that merchant), month view with spending by
-  category against budgets, monthly budgets with copy-from-last-month, CSV import with a
-  per-account column mapping, CSV attachments on forwarded emails read with that mapping,
-  duplicate detection against existing transactions, a review queue with live suggestions,
-  CSV export, and personal transactions that others see only as an amount.
-- Next: bank-specific email parsers (needs three sample emails per bank), recurring rules,
-  statement balance reconciliation, history backfill.
+The app has three spaces plus Family, and Log on every screen:
+
+- **Today**: what the family can spend per day until payday and stay on plan, the book for the
+  month with ✓ (logged by the family) and ✓✓ (confirmed by the bank), envelopes (budgets), which
+  accounts the bank has confirmed, and the next goal.
+- **Log**: money out, money in, or a move between accounts or into a goal. Repeats and merchant
+  memory fill in the category and account. Before saving, anything that looks already in the
+  book is shown, so the family says "same payment" or "a separate one".
+- **Decide**: one card at a time. Possible double entries, balance gaps against the bank,
+  merchants that need a category (one choice files them all), a goal that could be funded from
+  spare money, and Gmail forwarding codes.
+- **Plan**: goals funded in priority order, drawn as one road with a lever for the monthly amount
+  and a price-rise guess. Goals have parts (cost items, or stages for a build), wanted-by dates,
+  and money moved in from accounts.
+- **Family**: forwarding setup, accounts (CSV import, balance checks), people, envelopes, inbox,
+  payday, CSV export.
+
+Next: bank-specific email parsers (needs three sample emails per bank), recurring bills, history
+backfill.
 
 ## Stack
 
@@ -44,7 +55,7 @@ Open http://localhost:8787, enter an email, and copy the sign-in link from the t
 To try the email path locally, send a raw message to the local Email Worker:
 
 ```sh
-curl -X POST 'http://localhost:8787/cdn-cgi/handler/email?from=alerts@bank.example&to=stmt%2B<token>@statements.leadbase.stream' \
+curl -X POST 'http://localhost:8787/cdn-cgi/handler/email?from=alerts@bank.example&to=stmt%2B<token>@leadbase.stream' \
   --data-binary @test/fixtures/sample.eml
 ```
 
@@ -58,14 +69,14 @@ a few seconds.
 
 | Resource | Name | Notes |
 | --- | --- | --- |
-| D1 database | `personal-expense` | id `eddba7ce-aa58-43c2-891e-7a6e1a075757`, APAC; migrations `0000` to `0002` applied |
+| D1 database | `personal-expense` | id `eddba7ce-aa58-43c2-891e-7a6e1a075757`, APAC; migrations `0000` to `0003` applied |
 | R2 bucket | `personal-expense-mail` | raw statement emails and attachments |
 
 | Address | Purpose |
 | --- | --- |
 | `https://money.leadbase.stream` | The app (custom domain, created on first deploy) |
 | `https://personal-expense.<your-subdomain>.workers.dev` | Fallback address |
-| `stmt+<household token>@statements.leadbase.stream` | Where each household forwards statements |
+| `stmt+<household token>@leadbase.stream` | Where each household forwards statements |
 
 No secrets are required. The session-signing secret is generated on first use and stored in
 the `app_settings` table; set an `AUTH_SECRET` Worker secret only if you want to manage it.
@@ -90,16 +101,27 @@ any other branch only build preview versions.
 
 ### Email Routing for statements (one time)
 
-1. Dashboard › Email Service › Email Routing › `leadbase.stream` › Settings:
-   - under **Subdomains**, add `statements.leadbase.stream`
-   - turn on **Subaddressing**
-2. Routing Rules › Create: custom address `stmt@statements.leadbase.stream`, action
-   **Send to a Worker**, Worker `personal-expense`.
+Statements go to `stmt+<household token>@leadbase.stream`. Either of these sends them to the Worker:
 
-With subaddressing on, `stmt+<token>@statements.leadbase.stream` matches that one rule and the
-Worker reads the token. Email Routing must already be enabled on `leadbase.stream` to add a
-subdomain. If `leadbase.stream` itself receives mail through another provider, check that
-enabling Email Routing will not replace its MX records before you do it.
+- **Catch-all** (what is set up now): Email Service › Email Routing › `leadbase.stream` › Routing
+  Rules › Catch-all › Send to a Worker › `personal-expense`. The Worker keeps mail for a known
+  household token and quietly drops everything else, so no other address on the domain gets mail.
+- **One rule, catch-all left free**: turn on **Subaddressing** under Settings, then create a custom
+  address `stmt@leadbase.stream` › Send to a Worker › `personal-expense`. With subaddressing,
+  `stmt+<token>@leadbase.stream` matches it.
+
+A zone has one catch-all and it only covers the apex domain; subdomains need literal rules. The
+Worker reads the token whatever the domain, so a subdomain address can be added later.
+
+### Forwarding from Gmail
+
+1. Gmail › Settings › See all settings › Forwarding and POP/IMAP › Add a forwarding address, and
+   paste the household's address from Family › Statements by email.
+2. Gmail mails a confirmation code to that address. The Worker recognises it
+   (`forwarding-noreply@google.com`), keeps the code, and shows it as the first card in Decide
+   and on the forwarding page.
+3. Type the code into Gmail and choose Verify. Then add a filter that forwards only the bank's
+   emails, and put the bank's sender address on the account so its mail is read, not held back.
 
 ### Migrations
 
@@ -150,11 +172,13 @@ src/shared/          Pure helpers used by both sides: money, dates, CSV, column 
 src/worker/          Worker: API, email handler, parse step, cron
   db/schema.ts       The whole data model
   auth/              Magic links, sessions, generated signing secret
-  http/routes/       households, ledger (transactions, budgets, export), imports (CSV, review)
+  http/routes/       households, ledger (transactions, budgets, export), imports (CSV, review),
+                     goals (goals, parts, money in, plan), home (today, decide, log hints)
   ledger/            Categories, merchant memory, transactions and transfers
   ingest/            Email Worker, parse step, ingest pipeline, parser registry
   lib/               Small Worker helpers
-src/web/             React web app (Vite root)
+src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise), used by both sides
+src/web/             React web app (Vite root): Today, Log, Decide, Plan, Family
 migrations/          Drizzle-generated SQL applied by wrangler or the Cloudflare connector
 test/                Vitest unit tests and email fixtures
 ```
@@ -164,7 +188,13 @@ test/                Vitest unit tests and email fixtures
 1. A CSV arrives, either uploaded on the Accounts page or attached to a forwarded statement email.
 2. Its rows are read with the account's saved column mapping (set once, on the first upload).
 3. Each row's description is normalised to a merchant, and merchant memory supplies a category.
-4. A row is a likely duplicate when the same account already has a transaction with the same
-   amount and direction within two days.
-5. Rows with a known category and no likely duplicate are posted. Everything else waits in
-   Review, where one decision also teaches the merchant's category to every similar line.
+4. Each row is compared with transactions on the same account with the same amount and
+   direction within two days:
+   - exactly one fits, and it is a family entry the bank has not confirmed yet: the row is the
+     bank's copy of it, so the entry becomes ✓✓ and nothing new is added
+   - anything else fits (a bank line already there, two family entries): it waits in Decide
+5. Rows with a known category and nothing that fits are posted, already ✓✓. Everything else
+   waits in Decide, where one choice files every row from that merchant.
+6. Typing in an account's balance from the bank (Family › Accounts) starts its book; later
+   figures are compared with the book, and a gap shows in Decide with the unconfirmed entries most
+   likely to explain it.

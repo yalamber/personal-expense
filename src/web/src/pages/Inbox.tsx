@@ -9,6 +9,7 @@ const statusPill: Record<StatementStatus, { label: string; tone: string }> = {
   review: { label: "needs review", tone: "amber" },
   done: { label: "done", tone: "teal" },
   failed: { label: "failed", tone: "amber" },
+  forwarding: { label: "forwarding check", tone: "amber" },
 };
 
 function formatBytes(n: number): string {
@@ -51,7 +52,7 @@ export function Inbox({ household }: { household: Household }) {
   return (
     <>
       <div className="stack" style={{ gap: 4 }}>
-        <h1>Statement inbox</h1>
+        <h1>Inbox</h1>
         <div className="muted">
           Forward bank emails to <span className="mono">{household.inboundAddress}</span>. They show up here within a minute.
         </div>
@@ -124,6 +125,7 @@ export function Inbox({ household }: { household: Household }) {
                     <td>
                       <span className={`pill ${pill.tone}`}>{pill.label}</span>
                       {st.error && <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>{st.error}</div>}
+                      {st.verifyCode?.code && <div className="mono" style={{ marginTop: 4, fontSize: 13 }}>code {st.verifyCode.code}</div>}
                     </td>
                   </tr>
                 );

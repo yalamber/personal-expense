@@ -69,13 +69,18 @@ export function CsvImport({ household, account, onDone, onCancel }: { household:
           <li>
             <strong>{result.autoPosted}</strong> added straight to {account.name}, using categories remembered from earlier.
           </li>
+          {result.confirmed > 0 && (
+            <li>
+              <strong>{result.confirmed}</strong> matched entries the family had already logged, so they are now confirmed by the bank instead of counted twice.
+            </li>
+          )}
           <li>
-            <strong>{result.needsReview}</strong> waiting for a category or a duplicate check
-            {result.duplicates ? `, ${result.duplicates} of them possible duplicates` : ""}.
+            <strong>{result.needsReview}</strong> waiting in Decide for a category or a "same payment?" check
+            {result.duplicates ? `, ${result.duplicates} of them possible double entries` : ""}.
           </li>
           {result.alreadyQueued > 0 && (
             <li>
-              <strong>{result.alreadyQueued}</strong> already waiting in the review queue from an earlier import, so not added again.
+              <strong>{result.alreadyQueued}</strong> already waiting in Decide from an earlier import, so not added again.
             </li>
           )}
           {result.skipped > 0 && (
@@ -86,8 +91,8 @@ export function CsvImport({ household, account, onDone, onCancel }: { household:
         </ul>
         <div className="row">
           {result.needsReview > 0 && (
-            <a className="button" href={`/h/${household.id}/review`} onClick={onLinkClick}>
-              Review {result.needsReview} {result.needsReview === 1 ? "line" : "lines"}
+            <a className="button" href={`/h/${household.id}/decide`} onClick={onLinkClick}>
+              Decide on {result.needsReview} {result.needsReview === 1 ? "line" : "lines"}
             </a>
           )}
           <button type="button" className="secondary" onClick={onDone}>

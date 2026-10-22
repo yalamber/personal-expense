@@ -22,6 +22,13 @@
       "when": 1792487356309,
       "tag": "0002_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792697034332,
+      "tag": "0003_fable",
+      "breakpoints": true
     }
   ]
 }

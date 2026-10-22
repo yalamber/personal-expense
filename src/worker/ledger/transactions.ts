@@ -6,7 +6,15 @@ import { transferCategoryId } from "./categories";
 
 export type Direction = "out" | "in" | "transfer";
 
-export type DedupeCandidate = { id: string; accountId: string; date: string; amountMinor: number; direction: Direction };
+export type DedupeCandidate = {
+  id: string;
+  accountId: string;
+  date: string;
+  amountMinor: number;
+  direction: Direction;
+  source: "manual" | "email" | "csv" | "recurring";
+  confirmedAt: string | null;
+};
 
 /** Days either side of a date within which the same amount on the same account counts as a likely duplicate. */
 export const DUPLICATE_WINDOW_DAYS = 2;
@@ -24,6 +32,8 @@ export async function loadDedupeCandidates(db: Db, accountId: string, from: stri
       date: schema.transactions.date,
       amountMinor: schema.transactions.amountMinor,
       direction: schema.transactions.direction,
+      source: schema.transactions.source,
+      confirmedAt: schema.transactions.confirmedAt,
     })
     .from(schema.transactions)
     .where(
@@ -35,20 +45,39 @@ export async function loadDedupeCandidates(db: Db, accountId: string, from: stri
     );
 }
 
-/** Pure: the closest candidate with the same account, direction and amount within the window. */
-export function findDuplicate(
-  candidates: DedupeCandidate[],
-  line: { accountId: string; date: string; amountMinor: number; direction: Direction },
-  exclude: Set<string> = new Set(),
-): DedupeCandidate | null {
-  let best: { c: DedupeCandidate; gap: number } | null = null;
+type LineShape = { accountId: string; date: string; amountMinor: number; direction: Direction };
+
+/** Pure: every candidate with the same account, direction and amount within the window, nearest first. */
+export function findMatches<C extends Omit<DedupeCandidate, "source" | "confirmedAt">>(candidates: C[], line: LineShape, exclude: Set<string> = new Set()): C[] {
   const t = Date.parse(`${line.date}T00:00:00Z`);
-  for (const c of candidates) {
-    if (exclude.has(c.id) || c.accountId !== line.accountId || c.direction !== line.direction || c.amountMinor !== line.amountMinor) continue;
-    const gap = Math.abs(Date.parse(`${c.date}T00:00:00Z`) - t) / 86_400_000;
-    if (gap <= DUPLICATE_WINDOW_DAYS && (!best || gap < best.gap)) best = { c, gap };
-  }
-  return best?.c ?? null;
+  return candidates
+    .filter((c) => !exclude.has(c.id) && c.accountId === line.accountId && c.direction === line.direction && c.amountMinor === line.amountMinor)
+    .map((c) => ({ c, gap: Math.abs(Date.parse(`${c.date}T00:00:00Z`) - t) / 86_400_000 }))
+    .filter((x) => x.gap <= DUPLICATE_WINDOW_DAYS)
+    .sort((a, b) => a.gap - b.gap)
+    .map((x) => x.c);
+}
+
+/** Pure: the closest candidate with the same account, direction and amount within the window. */
+export function findDuplicate<C extends Omit<DedupeCandidate, "source" | "confirmedAt">>(candidates: C[], line: LineShape, exclude: Set<string> = new Set()): C | null {
+  return findMatches(candidates, line, exclude)[0] ?? null;
+}
+
+export type LineMatch<C> = { kind: "confirm"; match: C } | { kind: "question"; match: C; others: number } | { kind: "none" };
+
+/**
+ * Pure: what a bank line means for the book.
+ *  - exactly one candidate, and it is a manual entry the bank has not confirmed yet: the bank is
+ *    confirming it, so the line is merged into it (one transaction, now double-checked)
+ *  - any other candidates (a bank line already there, several manual entries): ask the family
+ *  - none: a new transaction
+ */
+export function classifyLine<C extends DedupeCandidate>(candidates: C[], line: LineShape, exclude: Set<string> = new Set()): LineMatch<C> {
+  const matches = findMatches(candidates, line, exclude);
+  if (!matches.length) return { kind: "none" };
+  const [first] = matches as [C, ...C[]];
+  if (matches.length === 1 && first.source === "manual" && !first.confirmedAt) return { kind: "confirm", match: first };
+  return { kind: "question", match: first, others: matches.length - 1 };
 }
 
 export type NewTransaction = {
@@ -66,6 +95,9 @@ export type NewTransaction = {
   importLineId?: string | null;
   transferPairId?: string | null;
   note?: string | null;
+  goalId?: string | null;
+  /** Bank lines are confirmed when posted; leave unset for manual entries. */
+  confirmedAt?: string | null;
 };
 
 export function transactionValues(t: NewTransaction): typeof schema.transactions.$inferInsert {
@@ -86,6 +118,8 @@ export function transactionValues(t: NewTransaction): typeof schema.transactions
     dedupeHash: dedupeHash(t.accountId, t.direction, Math.abs(Math.round(t.amountMinor)), t.date),
     transferPairId: t.transferPairId ?? null,
     note: t.note ?? null,
+    goalId: t.goalId ?? null,
+    confirmedAt: t.confirmedAt ?? (t.source === "email" || t.source === "csv" ? new Date().toISOString() : null),
   };
 }
 
@@ -97,14 +131,13 @@ export function transactionValues(t: NewTransaction): typeof schema.transactions
  */
 export async function createTransfer(
   db: Db,
-  input: { householdId: string; fromAccountId: string; toAccountId: string; amountMinor: number; date: string; note?: string | null; memberId: string },
-): Promise<{ pairId: string }> {
+  input: { householdId: string; fromAccountId: string; toAccountId: string; amountMinor: number; date: string; note?: string | null; memberId: string; goalId?: string | null; description?: string },
+): Promise<{ pairId: string; outId: string; inId: string }> {
   const pairId = newId();
   const categoryId = await transferCategoryId(db, input.householdId);
-  const base = { householdId: input.householdId, amountMinor: input.amountMinor, date: input.date, categoryId, source: "manual" as const, transferPairId: pairId, note: input.note ?? null, paidByMemberId: input.memberId };
-  await db.batch([
-    db.insert(schema.transactions).values(transactionValues({ ...base, direction: "out", accountId: input.fromAccountId, description: "Transfer out" })),
-    db.insert(schema.transactions).values(transactionValues({ ...base, direction: "in", accountId: input.toAccountId, description: "Transfer in" })),
-  ]);
-  return { pairId };
+  const base = { householdId: input.householdId, amountMinor: input.amountMinor, date: input.date, categoryId, source: "manual" as const, transferPairId: pairId, note: input.note ?? null, paidByMemberId: input.memberId, goalId: input.goalId ?? null };
+  const out = transactionValues({ ...base, direction: "out", accountId: input.fromAccountId, description: input.description ?? "Transfer out" });
+  const inn = transactionValues({ ...base, direction: "in", accountId: input.toAccountId, description: input.description ?? "Transfer in" });
+  await db.batch([db.insert(schema.transactions).values(out), db.insert(schema.transactions).values(inn)]);
+  return { pairId, outId: out.id!, inId: inn.id! };
 }

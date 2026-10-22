@@ -10,10 +10,11 @@
  * Parsing runs after the handler returns (queue if bound, otherwise ctx.waitUntil).
  */
 import { eq } from "drizzle-orm";
+import PostalMime from "postal-mime";
 import { getDb, schema } from "../db";
 import type { AppEnv } from "../env";
 import { newId } from "../lib/ids";
-import { extractEmail, parseInboundAddress, rawMailKeys, senderMatches } from "../lib/inbound";
+import { extractEmail, forwardingCheck, parseInboundAddress, rawMailKeys, senderMatches } from "../lib/inbound";
 import { dispatchParse } from "./dispatch";
 
 const MAX_RAW_BYTES = 25 * 1024 * 1024;
@@ -54,7 +55,22 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
     customMetadata: { householdId: household.id, statementEmailId, from, receivedAt: new Date().toISOString() },
   });
 
-  const status = matched ? "received" : "quarantined";
+  // Gmail asks the new forwarding address to confirm before it forwards anything. Keep the code
+  // where the family can see it, instead of quarantining the message as an unknown sender.
+  let check = forwardingCheck(from, subject);
+  if (check && (!check.code || !check.link)) {
+    try {
+      const stored = await env.RAW_MAIL.get(keys.raw);
+      if (stored) {
+        const parsed = await new PostalMime().parse(await stored.arrayBuffer());
+        check = forwardingCheck(from, subject, `${parsed.text ?? ""}\n${parsed.html ?? ""}`) ?? check;
+      }
+    } catch (err) {
+      console.log(`[email] could not read forwarding check body: ${String(err)}`);
+    }
+  }
+
+  const status = check ? "forwarding" : matched ? "received" : "quarantined";
   try {
     await db.insert(schema.statementEmails).values({
       id: statementEmailId,
@@ -67,7 +83,8 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
       rawSize: message.rawSize,
       r2Key: keys.raw,
       status,
-      error: matched ? null : "sender is not on any account's allowlist",
+      error: check || matched ? null : "sender is not on any account's allowlist",
+      verifyCode: check ? JSON.stringify(check) : null,
     });
   } catch (err) {
     // Most likely the same Message-ID delivered twice. Keep R2 tidy and move on.
@@ -76,7 +93,7 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
     return;
   }
 
-  if (matched) {
+  if (matched && !check) {
     await dispatchParse(env, ctx, { kind: "parse-statement-email", statementEmailId, householdId: household.id });
   }
   console.log(`[email] stored ${statementEmailId} status=${status} from=${from} household=${household.id}`);

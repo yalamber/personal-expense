@@ -3,7 +3,7 @@
   "short_name": "Money",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F3F5F7",
-  "theme_color": "#15202B",
+  "background_color": "#F4F0E6",
+  "theme_color": "#F4F0E6",
   "icons": []
 }

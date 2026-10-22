@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { summarize } from "../src/worker/http/routes/ledger";
-import { dedupeHash, findDuplicate, type DedupeCandidate } from "../src/worker/ledger/transactions";
+import { classifyLine, dedupeHash, findDuplicate, type DedupeCandidate } from "../src/worker/ledger/transactions";
 import { DEFAULT_CATEGORIES } from "../src/worker/ledger/categories";
 
 type Cat = Parameters<typeof summarize>[1][number];
@@ -69,9 +69,9 @@ describe("summarize", () => {
 
 describe("findDuplicate", () => {
   const candidates: DedupeCandidate[] = [
-    { id: "a", accountId: "acc", date: "2026-10-10", amountMinor: 4250, direction: "out" },
-    { id: "b", accountId: "acc", date: "2026-10-12", amountMinor: 4250, direction: "out" },
-    { id: "c", accountId: "other", date: "2026-10-11", amountMinor: 4250, direction: "out" },
+    { id: "a", accountId: "acc", date: "2026-10-10", amountMinor: 4250, direction: "out", source: "manual", confirmedAt: null },
+    { id: "b", accountId: "acc", date: "2026-10-12", amountMinor: 4250, direction: "out", source: "manual", confirmedAt: null },
+    { id: "c", accountId: "other", date: "2026-10-11", amountMinor: 4250, direction: "out", source: "manual", confirmedAt: null },
   ];
 
   it("matches the same account, amount and direction within two days, closest first", () => {
@@ -92,6 +92,33 @@ describe("findDuplicate", () => {
 
   it("hashes consistently", () => {
     expect(dedupeHash("acc", "out", 4250, "2026-10-10")).toBe("acc|out|4250|2026-10-10");
+  });
+});
+
+describe("classifyLine", () => {
+  const line = { accountId: "acc", date: "2026-10-21", amountMinor: 186000, direction: "out" as const };
+  const manual = (id: string, date: string, extra: Partial<DedupeCandidate> = {}): DedupeCandidate => ({ id, accountId: "acc", date, amountMinor: 186000, direction: "out", source: "manual", confirmedAt: null, ...extra });
+
+  it("confirms the one manual entry the bank line is a copy of", () => {
+    const r = classifyLine([manual("m", "2026-10-20")], line);
+    expect(r.kind).toBe("confirm");
+    expect(r.kind === "confirm" && r.match.id).toBe("m");
+  });
+
+  it("asks when the only match is already confirmed by the bank", () => {
+    expect(classifyLine([manual("m", "2026-10-20", { confirmedAt: "2026-10-20T10:00:00Z" })], line).kind).toBe("question");
+    expect(classifyLine([manual("e", "2026-10-21", { source: "email", confirmedAt: "x" })], line).kind).toBe("question");
+  });
+
+  it("asks when two manual entries could be the one", () => {
+    const r = classifyLine([manual("a", "2026-10-20"), manual("b", "2026-10-22")], line);
+    expect(r.kind).toBe("question");
+    expect(r.kind === "question" && r.others).toBe(1);
+  });
+
+  it("is a new transaction when nothing fits, or the only fit is already claimed", () => {
+    expect(classifyLine([manual("a", "2026-10-01")], line).kind).toBe("none");
+    expect(classifyLine([manual("a", "2026-10-20")], line, new Set(["a"])).kind).toBe("none");
   });
 });
 

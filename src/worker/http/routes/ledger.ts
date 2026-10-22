@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, asc, between, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, between, desc, eq, inArray, isNull } from "drizzle-orm";
 import { toCsv } from "../../../shared/csv";
 import { isDate, isMonth, monthRange } from "../../../shared/dates";
 import { minorToDecimal, parseAmountToMinor } from "../../../shared/money";
@@ -7,7 +7,9 @@ import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
 import { ensureCategories } from "../../ledger/categories";
 import { rememberCategory, resolveMerchant } from "../../ledger/merchants";
-import { createTransfer, transactionValues } from "../../ledger/transactions";
+import { summarize } from "../../ledger/summary";
+import { createTransfer, findMatches, loadDedupeCandidates, transactionValues, DUPLICATE_WINDOW_DAYS } from "../../ledger/transactions";
+import { addDays } from "../../../shared/dates";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
 
@@ -76,6 +78,8 @@ type TxRow = {
   paidByName: string | null;
   source: string;
   transferPairId: string | null;
+  confirmedAt: string | null;
+  goalId: string | null;
 };
 
 async function queryTransactions(c: AppContext, from: string, to: string, opts: { accountId?: string; categoryId?: string } = {}): Promise<TxRow[]> {
@@ -102,6 +106,8 @@ async function queryTransactions(c: AppContext, from: string, to: string, opts: 
       paidByName: schema.members.name,
       source: schema.transactions.source,
       transferPairId: schema.transactions.transferPairId,
+      confirmedAt: schema.transactions.confirmedAt,
+      goalId: schema.transactions.goalId,
     })
     .from(schema.transactions)
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
@@ -125,7 +131,83 @@ ledgerRoutes.get("/transactions", async (c) => {
   return c.json(await queryTransactions(c, from, to, { accountId: c.req.query("accountId") || undefined, categoryId: c.req.query("categoryId") || undefined }));
 });
 
-/** Quick add: amount, category, who paid, shared or personal. The merchant's category is remembered. */
+export type Twin = {
+  kind: "transaction" | "line";
+  id: string;
+  date: string;
+  amountMinor: number;
+  name: string | null;
+  accountName: string | null;
+  byName: string | null;
+  source: string;
+  confirmed: boolean;
+  note: string | null;
+};
+
+/**
+ * Entries already in the book (or waiting in Decide) that look like the one being logged: same
+ * account, direction and amount within the duplicate window.
+ */
+async function findTwins(c: AppContext, accountId: string, direction: "out" | "in", amountMinor: number, date: string): Promise<Twin[]> {
+  const db = c.get("db");
+  const householdId = c.get("household").id;
+  const candidates = await loadDedupeCandidates(db, accountId, date, date);
+  const hits = findMatches(candidates, { accountId, direction, amountMinor, date }).slice(0, 3);
+  const twins: Twin[] = [];
+  if (hits.length) {
+    const rows = await db
+      .select({
+        id: schema.transactions.id,
+        date: schema.transactions.date,
+        amountMinor: schema.transactions.amountMinor,
+        merchant: schema.merchants.displayName,
+        description: schema.transactions.description,
+        accountName: schema.accounts.name,
+        byName: schema.members.name,
+        source: schema.transactions.source,
+        confirmedAt: schema.transactions.confirmedAt,
+        note: schema.transactions.note,
+        isPersonal: schema.transactions.isPersonal,
+        paidByMemberId: schema.transactions.paidByMemberId,
+      })
+      .from(schema.transactions)
+      .leftJoin(schema.merchants, eq(schema.merchants.id, schema.transactions.merchantId))
+      .leftJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
+      .leftJoin(schema.members, eq(schema.members.id, schema.transactions.paidByMemberId))
+      .where(inArray(schema.transactions.id, hits.map((h) => h.id)));
+    const me = c.get("member").id;
+    for (const h of hits) {
+      const r = rows.find((x) => x.id === h.id);
+      if (!r) continue;
+      const hidden = r.isPersonal && r.paidByMemberId !== me;
+      twins.push({ kind: "transaction", id: r.id, date: r.date, amountMinor: r.amountMinor, name: hidden ? "Personal" : r.merchant ?? r.description, accountName: r.accountName, byName: r.byName, source: r.source, confirmed: Boolean(r.confirmedAt), note: hidden ? null : r.note });
+    }
+  }
+  const signed = direction === "out" ? -amountMinor : amountMinor;
+  const lines = await db
+    .select({ id: schema.importLines.id, date: schema.importLines.parsedDate, description: schema.importLines.parsedDescription, accountName: schema.accounts.name })
+    .from(schema.importLines)
+    .innerJoin(schema.statementEmails, eq(schema.statementEmails.id, schema.importLines.statementEmailId))
+    .leftJoin(schema.accounts, eq(schema.accounts.id, schema.statementEmails.accountId))
+    .where(
+      and(
+        eq(schema.importLines.householdId, householdId),
+        eq(schema.statementEmails.accountId, accountId),
+        eq(schema.importLines.decision, "pending"),
+        eq(schema.importLines.parsedAmountMinor, signed),
+        between(schema.importLines.parsedDate, addDays(date, -DUPLICATE_WINDOW_DAYS), addDays(date, DUPLICATE_WINDOW_DAYS)),
+      ),
+    )
+    .limit(3);
+  for (const l of lines) twins.push({ kind: "line", id: l.id, date: l.date ?? date, amountMinor, name: l.description, accountName: l.accountName, byName: null, source: "statement", confirmed: true, note: null });
+  return twins;
+}
+
+/**
+ * Quick add: amount, category, who paid, shared or personal. The merchant's category is remembered.
+ * Before saving, entries that look like this one are returned with 409 so the person can say
+ * whether it is the same payment; `force` saves it as a separate payment.
+ */
 ledgerRoutes.post("/transactions", requireWriter, async (c) => {
   const db = c.get("db");
   const household = c.get("household");
@@ -139,6 +221,7 @@ ledgerRoutes.post("/transactions", requireWriter, async (c) => {
     note?: string;
     isPersonal?: boolean;
     paidByMemberId?: string | null;
+    force?: boolean;
   }>(c);
 
   const date = body.date ?? "";
@@ -150,6 +233,11 @@ ledgerRoutes.post("/transactions", requireWriter, async (c) => {
   if (!(await categoryBelongs(c, body.categoryId))) return c.json({ error: "category not found" }, 404);
   const description = (body.description ?? "").trim().slice(0, 200);
   if (!description) return c.json({ error: "add a short description, such as the shop name" }, 400);
+
+  if (!body.force) {
+    const twins = await findTwins(c, body.accountId!, direction, Math.abs(amount), date);
+    if (twins.length) return c.json({ error: "this looks like it is already in the book", twins }, 409);
+  }
 
   const merchant = await resolveMerchant(db, household.id, description);
   const categoryId = body.categoryId ?? merchant.defaultCategoryId;
@@ -198,6 +286,7 @@ ledgerRoutes.patch("/transactions/:id", requireWriter, async (c) => {
     patch.amountMinor = Math.abs(amount);
   }
   if (typeof body.description === "string" && body.description.trim()) patch.description = body.description.trim().slice(0, 200);
+  if (!Object.keys(patch).length) return c.json({ ok: true });
 
   await db.update(schema.transactions).set(patch).where(eq(schema.transactions.id, tx.id));
   // Teach merchant memory whenever a person picks a category.
@@ -242,48 +331,7 @@ ledgerRoutes.post("/transfers", requireWriter, async (c) => {
 
 export type CategoryTotal = { categoryId: string | null; name: string; kind: string; spentMinor: number; budgetMinor: number | null };
 
-/**
- * Pure aggregation for a month. Rules:
- *  - transfers (a transfer pair, the transfer direction, or a transfer category) count for nothing
- *  - money out in a saving category is "saved", not spent
- *  - money in to a need/want category is a refund and reduces that category's spend
- *  - other money in is income
- * Totals roll up to top-level categories.
- */
-export function summarize(txs: (Pick<TxRow, "amountMinor" | "direction" | "categoryId"> & { transferPairId?: string | null })[], categories: Category[]) {
-  const byId = new Map(categories.map((c) => [c.id, c]));
-  const topOf = (id: string | null): Category | null => {
-    let cat = id ? byId.get(id) ?? null : null;
-    while (cat?.parentId && byId.get(cat.parentId)) cat = byId.get(cat.parentId)!;
-    return cat;
-  };
-  let spent = 0;
-  let income = 0;
-  let saved = 0;
-  let uncategorized = 0;
-  const perTop = new Map<string | null, number>();
-  for (const t of txs) {
-    const cat = t.categoryId ? byId.get(t.categoryId) ?? null : null;
-    if (t.direction === "transfer" || t.transferPairId || cat?.kind === "transfer") continue;
-    if (!cat) uncategorized++;
-    const top = topOf(t.categoryId);
-    const key = top?.id ?? null;
-    if (t.direction === "out") {
-      if (cat?.kind === "saving") {
-        saved += t.amountMinor;
-        continue;
-      }
-      spent += t.amountMinor;
-      perTop.set(key, (perTop.get(key) ?? 0) + t.amountMinor);
-    } else if (cat && (cat.kind === "need" || cat.kind === "want")) {
-      spent -= t.amountMinor;
-      perTop.set(key, (perTop.get(key) ?? 0) - t.amountMinor);
-    } else {
-      income += t.amountMinor;
-    }
-  }
-  return { spent, income, saved, uncategorized, perTop };
-}
+export { summarize };
 
 ledgerRoutes.get("/summary", async (c) => {
   const month = c.req.query("month") ?? "";

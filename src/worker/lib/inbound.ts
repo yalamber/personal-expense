@@ -77,3 +77,21 @@ export function isBlockedAttachment(filename: string, mimeType: string): boolean
   if (blockedExt.has(ext)) return true;
   return /^application\/(x-msdownload|x-sh|java-archive|x-executable)$/i.test(mimeType);
 }
+
+export type ForwardingCheck = { provider: "gmail"; code: string | null; link: string | null; requester: string | null };
+
+const GMAIL_FORWARDING_SENDER = "forwarding-noreply@google.com";
+
+/**
+ * Recognises the email Gmail sends to a new forwarding address before it starts forwarding:
+ * "(#572612094) Gmail Forwarding Confirmation - Receive Mail from someone@gmail.com".
+ * The code and the confirmation link are read from the subject and, when given, the body text.
+ */
+export function forwardingCheck(from: string, subject: string | null, bodyText = ""): ForwardingCheck | null {
+  if (extractEmail(from).toLowerCase() !== GMAIL_FORWARDING_SENDER) return null;
+  const s = subject ?? "";
+  const code = s.match(/\(#\s*(\d{6,12})\)/)?.[1] ?? bodyText.match(/(?:code|código|code de confirmation)[^\d]{0,30}(\d{6,12})/i)?.[1] ?? bodyText.match(/\b(\d{9})\b/)?.[1] ?? null;
+  const link = bodyText.match(/https:\/\/mail(?:-settings)?\.google\.com\/mail\/[^\s<>"')]+/)?.[0] ?? null;
+  const requester = s.match(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\s*$/)?.[1] ?? bodyText.match(/([A-Za-z0-9._%+-]+@gmail\.com)/i)?.[1] ?? null;
+  return { provider: "gmail", code, link, requester };
+}
