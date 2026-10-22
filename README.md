@@ -29,6 +29,8 @@ the database, React + Vite for the web app. See `wrangler.jsonc` for bindings.
 
 ## Local development
 
+Requires Node.js 24 (pinned in `.node-version`, which Cloudflare's builds also use).
+
 ```sh
 npm install
 cp .dev.vars.example .dev.vars      # keeps sign-in links on localhost
