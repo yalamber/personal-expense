@@ -6,6 +6,7 @@ import { worth } from "../../../shared/worth";
 import { api, ApiError, type Account, type Goal, type Household, type PlanData } from "../api";
 import { onLinkClick } from "../router";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
+import { Lines, Meter, SERIES, Stacked, compact } from "../charts";
 
 export function toPlanGoals(goals: Goal[]): PlanGoal[] {
   return goals
@@ -66,7 +67,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
   const amount = pool ?? current;
   const releases = useMemo(() => (withReleases ? (data?.loans.releases ?? []) : []), [data, withReleases]);
   const sim = useMemo(
-    () => (data && goals.length ? simulatePlan(goals, { startMonth: data.startMonth, poolMinor: amount, priceRisePerYear: rise, releases }) : null),
+    () => (data && goals.length ? simulatePlan(goals, { startMonth: data.startMonth, poolMinor: amount, priceRisePerYear: rise, releases, trajectory: true }) : null),
     [data, goals, amount, rise, releases],
   );
 
@@ -177,7 +178,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
       when: monthName(r.fromMonth),
       late: false,
       done: false,
-      href: `/h/${household.id}/family/accounts`,
+      href: `/h/${household.id}/settings/accounts`,
       title: `${r.name} paid off`,
       chip: withReleases ? `+${formatMoney(Math.round(r.amountMinor / 10 ** minorDigits(cur)) * 10 ** minorDigits(cur), cur)} a month` : null,
       chipTone: "green",
@@ -188,6 +189,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
 
   // The road reads as a timeline: earliest first, whatever the funding order.
   miles.sort((a, b) => a.order.localeCompare(b.order));
+  const road = sim?.trajectory ? roadChart(sim.trajectory, data.goals, outcomes) : null;
 
   return (
     <>
@@ -272,6 +274,17 @@ export function Plan({ household, version, onChanged }: { household: Household; 
         </div>
       </section>
 
+      {road && (
+        <section className="card stack" aria-labelledby="road-h">
+          <div className="row between">
+            <h2 id="road-h">The road, month by month</h2>
+            <span className="small muted">what each goal holds as the money goes in</span>
+          </div>
+          <Lines series={road.series} labels={road.labels} markers={road.markers} currency={cur} format={(v) => formatMoney(v, cur)} height={220} caption="Show as a table" head="Month" />
+          {road.hidden > 0 && <span className="small muted">The first five goals are drawn; {road.hidden} more are in the table.</span>}
+        </section>
+      )}
+
       <section className="stack" aria-labelledby="levers-h">
         <h2 id="levers-h">What else moves the dates</h2>
         <div className="goal-grid">
@@ -338,8 +351,13 @@ export function Plan({ household, version, onChanged }: { household: Household; 
               {g.completedAt && <span className="pill green">reached</span>}
             </span>
             <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
-              <span className="mono small muted" style={{ marginRight: 8 }}>
-                {Math.round((g.savedMinor / Math.max(1, g.targetMinor)) * 100)}%
+              <span className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "center", marginRight: 8 }}>
+                <span style={{ width: 90 }}>
+                  <Meter value={g.savedMinor} max={g.targetMinor} compact />
+                </span>
+                <span className="mono small muted" style={{ minWidth: 36, textAlign: "right" }}>
+                  {Math.round((g.savedMinor / Math.max(1, g.targetMinor)) * 100)}%
+                </span>
               </span>
               {canWrite && (
                 <>
@@ -371,7 +389,7 @@ function WhatWeHave({ household, accounts }: { household: Household; accounts: A
     <section className="card stack" aria-labelledby="have-h">
       <div className="row between">
         <h2 id="have-h">What we have</h2>
-        <a className="small" href={`/h/${household.id}/family/accounts`} onClick={onLinkClick}>
+        <a className="small" href={`/h/${household.id}/settings/accounts`} onClick={onLinkClick}>
           Accounts
         </a>
       </div>
@@ -389,6 +407,31 @@ function WhatWeHave({ household, accounts }: { household: Household; accounts: A
           <dd>{formatMoney(have - owe, cur, { symbol: false })}</dd>
         </div>
       </dl>
+      <div className="goal-grid">
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="small" style={{ fontWeight: 600 }}>What we have</span>
+          <Stacked
+            segments={[
+              { label: "Everyday money", value: sum(accounts, (a) => a.type === "checking" || a.type === "cash" || a.type === "wallet"), color: SERIES[0] },
+              { label: "Savings and deposits", value: sum(accounts, (a) => a.type === "savings" || a.type === "deposit"), color: SERIES[1] },
+              { label: "Owed to us", value: sum(accounts, (a) => a.type === "lent" || (a.type === "person" && a.balanceMinor > 0)), color: SERIES[2] },
+            ]}
+            format={(v) => formatMoney(v, cur, { symbol: false })}
+          />
+        </div>
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="small" style={{ fontWeight: 600 }}>What we owe</span>
+          <Stacked
+            segments={[
+              { label: "Loans", value: -sum(accounts, (a) => a.type === "loan"), color: SERIES[4] },
+              { label: "Cards", value: -sum(accounts, (a) => a.type === "credit"), color: SERIES[3] },
+              { label: "To people", value: -sum(accounts, (a) => a.type === "person" && a.balanceMinor < 0), color: SERIES[2] },
+            ]}
+            format={(v) => formatMoney(v, cur, { symbol: false })}
+            empty="Nothing owed."
+          />
+        </div>
+      </div>
       {deposits.map((a) => (
         <div key={a.id} className="kv small">
           <span>
@@ -415,4 +458,33 @@ function WhatWeHave({ household, accounts }: { household: Household; accounts: A
       ))}
     </section>
   );
+}
+
+function sum(accounts: Account[], pick: (a: Account) => boolean): number {
+  return accounts.filter(pick).reduce((s, a) => s + a.balanceMinor, 0);
+}
+
+/**
+ * The simulator's month-by-month figures, thinned to a drawable number of points, one line per
+ * goal (the first five) with a marker where each lands.
+ */
+function roadChart(t: { months: string[]; saved: number[][] }, goals: Goal[], outcomes: GoalOutcome[]) {
+  const n = t.months.length;
+  const stepSize = Math.max(1, Math.ceil(n / 60));
+  const idx: number[] = [];
+  for (let i = 0; i < n; i += stepSize) idx.push(i);
+  if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+  const labels = idx.map((i) => monthName(t.months[i]!));
+  const active = goals.filter((g) => !g.completedAt);
+  const shown = active.slice(0, 5);
+  const series = shown.map((g, gi) => ({ name: g.name, color: SERIES[gi % SERIES.length]!, values: idx.map((i) => t.saved[active.indexOf(g)]?.[i] ?? null) }));
+  const markers = shown.flatMap((g, gi) => {
+    const o = outcomes.find((x) => x.id === g.id);
+    if (!o?.doneMonth || o.doneMonth === "now") return [];
+    const at = t.months.indexOf(o.doneMonth);
+    if (at < 0) return [];
+    const near = idx.reduce((best, i) => (Math.abs(i - at) < Math.abs(best - at) ? i : best), idx[0]!);
+    return [{ index: idx.indexOf(near), label: `${g.name} · ${monthName(o.doneMonth)}`, short: monthName(o.doneMonth), series: gi }];
+  });
+  return { labels, series, markers, hidden: Math.max(0, active.length - shown.length) };
 }

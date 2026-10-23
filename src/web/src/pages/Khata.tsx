@@ -5,6 +5,7 @@ import { api, ApiError, isQueued, QUEUED_NOTE, type Account, type Category, type
 import { navigate, onLinkClick } from "../router";
 import { CategorySelect, Icon, Sheet, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
 import { Pending } from "./Pending";
+import { Diverging, Lines, SERIES } from "../charts";
 
 /**
  * Khata: the family's tabs with shops, relatives and friends. Each contact has a page like the
@@ -151,6 +152,22 @@ export function Khata({ household, onChanged }: { household: Household; onChange
         )}
       </section>
       {error && <div className="error">{error}</div>}
+
+      {rows.filter((a) => a.balanceMinor !== 0).length >= 2 && (
+        <section className="card stack" aria-labelledby="whom-h" style={{ maxWidth: 760 }}>
+          <h2 id="whom-h">Who owes whom</h2>
+          <Diverging
+            rows={[...rows]
+              .filter((a) => a.balanceMinor !== 0)
+              .sort((a, b) => Math.abs(b.balanceMinor) - Math.abs(a.balanceMinor))
+              .slice(0, 8)
+              .map((a) => ({ label: a.name, value: a.balanceMinor }))}
+            format={(v) => formatMoney(v, cur, { symbol: false })}
+            negative={{ label: "We owe", color: SERIES[4] }}
+            positive={{ label: "Owed to us", color: SERIES[0] }}
+          />
+        </section>
+      )}
 
       {rows.length === 0 && (
         <section className="card night stack" style={{ gap: 10, maxWidth: 560 }}>
@@ -338,6 +355,24 @@ export function KhataPage({ household, contactId, categories, onChanged }: { hou
           </div>
         </dl>
       </section>
+      {counted.length >= 2 && (
+        <section className="card stack" aria-labelledby="moved-h" style={{ maxWidth: 760 }}>
+          <div className="row between">
+            <h2 id="moved-h">How the tab moved</h2>
+            <span className="small muted">above the line they owe us · below, we owe</span>
+          </div>
+          <Lines
+            series={[{ name: "Balance", color: SERIES[0], values: [ledger.openingMinor, ...counted.map((e) => e.balanceMinor)] }]}
+            labels={[ledger.openingDate ? shortDate(ledger.openingDate) : "start", ...counted.map((e) => shortDate(e.date))]}
+            currency={cur}
+            format={(v) => balanceLine(v, cur)}
+            step
+            area
+            height={170}
+            head="After"
+          />
+        </section>
+      )}
       {notice && <div className="ok">{notice}</div>}
       {error && <div className="error">{error}</div>}
 

@@ -192,7 +192,7 @@ export function Log({
       <Sheet title="Log it" onClose={onClose}>
         <p>
           Add an account first, such as a joint bank account, a card, or cash.{" "}
-          <a href={`/h/${household.id}/family/accounts`} onClick={(e) => { onClose(); onLinkClick(e); }}>
+          <a href={`/h/${household.id}/settings/accounts`} onClick={(e) => { onClose(); onLinkClick(e); }}>
             Add an account
           </a>
         </p>

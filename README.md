@@ -13,7 +13,7 @@ the Email Worker storing forwarded mail in R2, the statement inbox, nightly hous
 
 **Phase 1, ledger and ingestion: done, with the redesign.**
 
-The app has four spaces plus Family, and Log on every screen:
+The app has four spaces plus Settings, and Log on every screen:
 
 - **Today**: what the family can spend per day until payday and stay on plan, the book for the
   month with ✓ (logged by the family) and ✓✓ (confirmed by the bank), envelopes (budgets), which
@@ -29,10 +29,10 @@ The app has four spaces plus Family, and Log on every screen:
   and money moved in from accounts.
 - **Khata**: the family's tabs with shops, relatives and friends, one book per person, with what
   we owe and what we are owed at the top.
-- **Family**: starting point, forwarding setup, accounts, people, envelopes, inbox, payday,
+- **Settings**: starting point, forwarding setup, accounts, people, envelopes, inbox, payday,
   CSV export.
 
-**Day one, not month three.** The starting point (Family › Starting point) takes what the family
+**Day one, not month three.** The starting point (Settings › Starting point) takes what the family
 has and owes today, so balances, Today and the Plan are right from the first day:
 
 - **Accounts with a starting balance**: bank, savings, cash and wallets. A balance typed for today
@@ -61,6 +61,13 @@ holds. It can come from an account, out of money already saved for the goal, or 
 book started.
 
 Today shows what we have (held, owed, FD interest so far) and the month's loan installments.
+
+**Charts** (`src/web/src/charts.tsx`, plain SVG and HTML, no library): Today draws the month's
+spending against an even "on plan" line, where it went by category, and the last six months in and
+out (`GET /months`); Plan draws the road month by month from the simulator's trajectory, each
+goal's progress, and what we have against what we owe; Khata draws who owes whom and how a tab
+moved; Accounts shows how far an FD or a loan has run. Every chart has a hover readout and a table
+view, and the series colours are validated for colour-blind separation.
 Entries on deposits, loans and money lent are moves, never the month's income or spending.
 
 Next: bank-specific email parsers (needs three sample emails per bank), recurring bills, history
@@ -168,7 +175,7 @@ A zone has one catch-all and it only covers the apex domain; subdomains need the
 ### Forwarding from Gmail
 
 1. Gmail › Settings › See all settings › Forwarding and POP/IMAP › Add a forwarding address, and
-   paste the household's address from Family › Statements by email.
+   paste the household's address from Settings › Statements by email.
 2. Gmail mails a confirmation code to that address. The Worker recognises it
    (`forwarding-noreply@google.com`), keeps the code, and shows it as the first card in Decide
    and on the forwarding page.
@@ -232,7 +239,7 @@ src/worker/          Worker: API, email handler, parse step, cron
   lib/               Small Worker helpers
 src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise, freed EMIs), used by both sides
 src/shared/deposit.ts, loan.ts   Fixed-deposit interest and maturity; EMI, interest split, months left
-src/web/             React web app (Vite root): Today, Log, Decide, Plan, Family
+src/web/             React web app (Vite root): Today, Log, Decide, Plan, Khata, Settings
 migrations/          Drizzle-generated SQL applied by wrangler or the Cloudflare connector
 test/                Vitest unit tests and email fixtures
 ```
@@ -249,6 +256,6 @@ test/                Vitest unit tests and email fixtures
    - anything else fits (a bank line already there, two family entries): it waits in Decide
 5. Rows with a known category and nothing that fits are posted, already ✓✓. Everything else
    waits in Decide, where one choice files every row from that merchant.
-6. An account's starting balance (Family › Starting point or Accounts) starts its book; later
+6. An account's starting balance (Settings › Starting point or Accounts) starts its book; later
    figures are compared with the book, and a gap shows in Decide with the unconfirmed entries most
    likely to explain it.

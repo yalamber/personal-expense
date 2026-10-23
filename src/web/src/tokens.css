@@ -27,6 +27,12 @@
   --font-display: "Fraunces", Georgia, serif;
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Chart series, in fixed order (validated for colour-blind separation against the card surface). */
+  --series-1: #1f8f5c;
+  --series-2: #2e6fb8;
+  --series-3: #d08c22;
+  --series-4: #7d4890;
+  --series-5: #b0421a;
 }
 
 * {
@@ -918,6 +924,278 @@ main.app {
     margin-top: auto;
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
   }
+}
+
+/* ---- Charts ------------------------------------------------------------ */
+
+.chart {
+  position: relative;
+  width: 100%;
+}
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+.chart text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--muted);
+}
+.chart text.ink {
+  fill: var(--ink);
+  font-weight: 600;
+}
+.chart text.soft {
+  fill: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+.chart .grid {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+}
+.chart .axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.chart .hit {
+  fill: transparent;
+  outline: none;
+}
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--night);
+  color: var(--night-muted);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  z-index: 5;
+  min-width: 130px;
+  box-shadow: 0 6px 18px rgba(32, 48, 42, 0.18);
+}
+.chart-tip .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.chart-tip strong {
+  font-family: var(--font-mono);
+  color: var(--night-ink);
+}
+.chart-tip .key {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.legend .key {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.legend .key.rect {
+  height: 10px;
+  border-radius: 2px;
+}
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.meter .labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.meter .track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--wash);
+}
+.meter.has-tick {
+  margin-bottom: 14px;
+}
+.meter .fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px 0 0 4px;
+}
+.meter .fill.full {
+  border-radius: 4px;
+}
+.meter .tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+}
+.meter .tick-label {
+  position: absolute;
+  top: 11px;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.meter.compact .labels {
+  font-size: 12px;
+}
+.meter.compact .track {
+  height: 6px;
+}
+.bars {
+  display: grid;
+  grid-template-columns: minmax(70px, 140px) 1fr auto;
+  gap: 7px 10px;
+  align-items: center;
+  font-size: 13px;
+}
+.bars .label {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bars .track {
+  height: 14px;
+}
+.bars .fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+.bars .value,
+.diverge .value {
+  font-family: var(--font-mono);
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+.diverge {
+  display: grid;
+  grid-template-columns: minmax(70px, 140px) 1fr auto;
+  gap: 7px 10px;
+  align-items: center;
+  font-size: 13px;
+}
+.diverge .legend {
+  grid-column: 1 / -1;
+}
+.diverge .label {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diverge .track {
+  position: relative;
+  height: 14px;
+}
+.diverge .track::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line);
+}
+.diverge .neg,
+.diverge .pos {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+}
+.diverge .neg {
+  right: 50%;
+  margin-right: 1px;
+  border-radius: 4px 0 0 4px;
+}
+.diverge .pos {
+  left: 50%;
+  margin-left: 1px;
+  border-radius: 0 4px 4px 0;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stack-bar {
+  display: flex;
+  height: 14px;
+  gap: 2px;
+}
+.stack-bar span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+.stack-bar span:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.stack-bar span:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.stack-legend {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 3px 10px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.stack-legend .mono {
+  color: var(--ink);
+}
+@media (max-width: 480px) {
+  .bars,
+  .diverge {
+    grid-template-columns: minmax(60px, 96px) 1fr auto;
+  }
+  .diverge .side {
+    display: none;
+  }
+}
+.chart-table {
+  font-size: 13px;
+}
+.chart-table summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+  padding: 4px 0;
+}
+.chart-table summary::before {
+  content: "▸ ";
+}
+.chart-table[open] summary::before {
+  content: "▾ ";
 }
 
 /* ---- Offline ----------------------------------------------------------- */

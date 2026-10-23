@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { and, asc, between, desc, eq, inArray, isNull } from "drizzle-orm";
 import { toCsv } from "../../../shared/csv";
-import { isDate, isMonth, monthRange } from "../../../shared/dates";
+import { isDate, isMonth, monthRange, shiftMonth, todayIn } from "../../../shared/dates";
 import { minorToDecimal, parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
@@ -333,6 +333,29 @@ ledgerRoutes.post("/transfers", requireWriter, async (c) => {
 export type CategoryTotal = { categoryId: string | null; name: string; kind: string; spentMinor: number; budgetMinor: number | null };
 
 export { summarize };
+
+/** The last few months at a glance: what came in, what was spent, what was saved. */
+ledgerRoutes.get("/months", async (c) => {
+  const count = Math.min(24, Math.max(1, Math.round(Number(c.req.query("count") ?? 6)) || 6));
+  const db = c.get("db");
+  const household = c.get("household");
+  const thisMonth = todayIn(household.timezone).slice(0, 7);
+  const months = Array.from({ length: count }, (_, i) => shiftMonth(thisMonth, i - (count - 1)));
+  const [categories, all, kept] = await Promise.all([
+    loadCategories(c),
+    queryTransactions(c, monthRange(months[0]!).from, monthRange(thisMonth).to),
+    db.select({ id: schema.accounts.id }).from(schema.accounts).where(and(eq(schema.accounts.householdId, household.id), inArray(schema.accounts.type, [...KEPT_TYPES]))),
+  ]);
+  const keptIds = new Set(kept.map((k) => k.id));
+  const txs = all.filter((t) => !keptIds.has(t.accountId));
+  return c.json(
+    months.map((month) => {
+      const { from, to } = monthRange(month);
+      const s = summarize(txs.filter((t) => t.date >= from && t.date <= to), categories);
+      return { month, incomeMinor: s.income, spentMinor: s.spent, savedMinor: s.saved };
+    }),
+  );
+});
 
 ledgerRoutes.get("/summary", async (c) => {
   const month = c.req.query("month") ?? "";

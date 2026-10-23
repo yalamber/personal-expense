@@ -430,6 +430,7 @@ export const api = {
     request<{ pairId: string }>("POST", `${h(id)}/transfers`, body),
 
   summary: (id: string, month: string) => request<Summary>("GET", `${h(id)}/summary?month=${month}`),
+  months: (id: string, count = 6) => request<{ month: string; incomeMinor: number; spentMinor: number; savedMinor: number }[]>("GET", `${h(id)}/months?count=${count}`),
   budgets: (id: string, month: string) => request<Budget[]>("GET", `${h(id)}/budgets?month=${month}`),
   setBudget: (id: string, body: { month: string; categoryId: string; amount: string }) => request<{ ok: true }>("PUT", `${h(id)}/budgets`, body),
   copyBudgets: (id: string, month: string, fromMonth: string) => request<{ copied: number }>("POST", `${h(id)}/budgets/copy-previous`, { month, fromMonth }),

@@ -6,7 +6,7 @@ import { Accounts } from "./Accounts";
 import { Budgets } from "./Budgets";
 import { Khata, KhataPage } from "./Khata";
 import { Decide } from "./Decide";
-import { Family, Forwarding } from "./Family";
+import { Forwarding, Settings } from "./Settings";
 import { GoalDetail } from "./GoalDetail";
 import { Inbox } from "./Inbox";
 import { Log } from "./Log";
@@ -18,21 +18,21 @@ import { StartingPoint } from "./StartingPoint";
 import { Today } from "./Today";
 
 /** Old addresses from the first version keep working. */
-const LEGACY: Record<string, string> = { "/review": "/decide", "/budgets": "/family/envelopes", "/inbox": "/family/inbox", "/accounts": "/family/accounts", "/members": "/family/people", "/family/contacts": "/khata" };
+const LEGACY: Record<string, string> = { "/review": "/decide", "/budgets": "/settings/envelopes", "/inbox": "/settings/inbox", "/accounts": "/settings/accounts", "/members": "/settings/people", "/settings/contacts": "/khata" };
 
-type Space = "today" | "plan" | "khata" | "decide" | "family";
+type Space = "today" | "plan" | "khata" | "decide" | "settings";
 
 function spaceOf(sub: string): Space {
   if (sub.startsWith("/plan")) return "plan";
   if (sub.startsWith("/khata")) return "khata";
   if (sub.startsWith("/decide")) return "decide";
-  if (sub.startsWith("/family")) return "family";
+  if (sub.startsWith("/settings")) return "settings";
   return "today";
 }
 
 /**
  * Three spaces instead of seven tabs: Today (how are we doing), Plan (are we getting there),
- * Decide (what needs a call from us), with Family for people and plumbing, and Log on every screen.
+ * Decide (what needs a call from us), Khata (who owes whom), with Settings for people and plumbing, and Log on every screen.
  */
 export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId: string; sub: string; onLogout: () => void }) {
   const [household, setHousehold] = useState<Household | null>(null);
@@ -47,7 +47,8 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
 
   useEffect(() => {
     if (LEGACY[sub]) navigate(`/h/${householdId}${LEGACY[sub]}`);
-    else if (sub.startsWith("/family/contacts/")) navigate(`/h/${householdId}/khata/${sub.slice("/family/contacts/".length)}`);
+    else if (sub === "/family" || sub.startsWith("/family/")) navigate(`/h/${householdId}/settings${sub.slice("/family".length)}`);
+    else if (sub.startsWith("/settings/contacts/")) navigate(`/h/${householdId}/khata/${sub.slice("/settings/contacts/".length)}`);
   }, [sub, householdId]);
 
   const loadBasics = useCallback(async () => {
@@ -116,8 +117,8 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
             <a href={`${base}/decide`} aria-current={tab("decide")} onClick={onLinkClick}>
               Decide {decideCount > 0 && <span className="count">{decideCount}</span>}
             </a>
-            <a href={`${base}/family`} aria-current={tab("family")} onClick={onLinkClick}>
-              Family
+            <a href={`${base}/settings`} aria-current={tab("settings")} onClick={onLinkClick}>
+              Settings
             </a>
           </nav>
           <span className="who">{me.user.email}</span>
@@ -143,20 +144,20 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
         {household && sub === "/plan/new" && <NewGoal household={household} accounts={accounts} />}
         {household && goalMatch && <GoalDetail household={household} accounts={accounts} goalId={goalMatch[1]!} onChanged={changed} />}
         {household && space === "decide" && <Decide household={household} accounts={accounts} categories={categories} version={version} onChanged={changed} />}
-        {household && sub === "/family" && <Family household={household} onLogout={onLogout} onChanged={changed} />}
-        {household && sub === "/family/forwarding" && <Forwarding household={household} />}
+        {household && sub === "/settings" && <Settings household={household} onLogout={onLogout} onChanged={changed} />}
+        {household && sub === "/settings/forwarding" && <Forwarding household={household} />}
         {household && sub === "/khata" && <Khata household={household} onChanged={changed} />}
         {household && contactMatch && <KhataPage household={household} contactId={contactMatch[1]!} categories={categories} onChanged={changed} />}
-        {household && sub.startsWith("/family/") && sub !== "/family/forwarding" && (
+        {household && sub.startsWith("/settings/") && sub !== "/settings/forwarding" && (
           <>
-            <a className="back" href={`${base}/family`} onClick={onLinkClick}>
-              <Icon.back /> Family
+            <a className="back" href={`${base}/settings`} onClick={onLinkClick}>
+              <Icon.back /> Settings
             </a>
-            {sub === "/family/start" && <StartingPoint household={household} onChanged={changed} />}
-            {sub === "/family/accounts" && <Accounts household={household} />}
-            {sub === "/family/people" && <Members household={household} />}
-            {sub === "/family/envelopes" && <Budgets household={household} />}
-            {sub === "/family/inbox" && <Inbox household={household} />}
+            {sub === "/settings/start" && <StartingPoint household={household} onChanged={changed} />}
+            {sub === "/settings/accounts" && <Accounts household={household} />}
+            {sub === "/settings/people" && <Members household={household} />}
+            {sub === "/settings/envelopes" && <Budgets household={household} />}
+            {sub === "/settings/inbox" && <Inbox household={household} />}
           </>
         )}
       </main>
@@ -186,9 +187,9 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
           <Icon.decide />
           Decide
         </a>
-        <a href={`${base}/family`} aria-current={tab("family")} onClick={onLinkClick}>
-          <Icon.family />
-          Family
+        <a href={`${base}/settings`} aria-current={tab("settings")} onClick={onLinkClick}>
+          <Icon.settings />
+          Settings
         </a>
       </nav>
 

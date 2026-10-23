@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { addDays, monthRange } from "../../../shared/dates";
+import { daysBetween } from "../../../shared/deposit";
 import { lateLabel, monthName } from "../../../shared/plan";
+import { spendOf, summarize } from "../../../shared/summary";
+import { Bars, Lines, Meter, SERIES } from "../charts";
 import { api, ApiError, type Account, type AccountType, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
 import { onLinkClick } from "../router";
 import { Pending } from "./Pending";
@@ -29,6 +33,7 @@ export function Today({
   const [data, setData] = useState<TodayData | null>(null);
   const [month, setMonth] = useState<string | null>(null);
   const [txs, setTxs] = useState<Transaction[] | null>(null);
+  const [months, setMonths] = useState<{ month: string; incomeMinor: number; spentMinor: number; savedMinor: number }[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +47,7 @@ export function Today({
       const m = month ?? t.month;
       if (!month) setMonth(m);
       setTxs(await api.transactions(household.id, m));
+      api.months(household.id, 6).then(setMonths).catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load today");
     }
@@ -64,6 +70,34 @@ export function Today({
   const nothingYet = data.incomeMinor === 0 && data.spentMinor === 0;
   const over = data.everydayLeftMinor < 0;
   const goalName = (id: string | null) => goals.find((g) => g.id === id)?.name;
+  // The month in pictures: spending by day against the pace, and where it went.
+  const viewing = month ?? data.month;
+  const isCurrent = viewing === data.month;
+  const { from, to } = monthRange(viewing);
+  const kept = new Set(accounts.filter((a) => a.type === "deposit" || a.type === "loan" || a.type === "lent").map((a) => a.id));
+  const spendTxs = (txs ?? []).filter((t) => !kept.has(t.accountId));
+  const spentByDay = new Map<string, number>();
+  for (const t of spendTxs) spentByDay.set(t.date, (spentByDay.get(t.date) ?? 0) + spendOf(t, categories));
+  const lastDay = isCurrent && data.today < to ? data.today : to;
+  const days: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) days.push(d);
+  const budget = data.everydayLeftMinor + data.spentMinor;
+  // Spent so far, day by day, against the straight line that spends the month's money evenly.
+  let running = 0;
+  const soFar = days.map((d) => (d > lastDay ? null : (running += spentByDay.get(d) ?? 0)));
+  const onPlan = budget > 0 ? days.map((_, i) => Math.round((budget * (i + 1)) / days.length)) : null;
+  const paceSeries = [{ name: "Spent so far", color: SERIES[0], values: soFar }, ...(onPlan ? [{ name: "On plan", color: "var(--muted)", values: onPlan }] : [])];
+  const elapsed = Math.min(1, Math.max(0, (daysBetween(from, data.today) + 1) / (daysBetween(from, to) + 1)));
+  const paceTone = budget <= 0 ? "serious" : data.spentMinor / budget <= elapsed ? "good" : data.spentMinor <= budget ? "warning" : "serious";
+  const perTop = summarize(spendTxs, categories).perTop;
+  const catRows = [...perTop.entries()]
+    .filter(([, v]) => v > 0)
+    .map(([id, v]) => ({ label: id ? categories.find((c) => c.id === id)?.name ?? "Other" : "Uncategorised", value: v }))
+    .sort((a, b) => b.value - a.value);
+  const topRows = catRows.length > 6 ? [...catRows.slice(0, 5), { label: "Everything else", value: catRows.slice(5).reduce((s, r) => s + r.value, 0) }] : catRows;
+  // The months before the book began are not months of nothing; start at the first with entries.
+  const history = months.slice(Math.max(0, months.findIndex((m) => m.incomeMinor || m.spentMinor)));
+  const hasHistory = history.filter((m) => m.incomeMinor || m.spentMinor).length >= 2;
   const people = accounts.filter((a) => a.type === "person" && !a.closedAt);
   const weOwe = people.reduce((s, a) => s + Math.max(0, -a.balanceMinor), 0);
   const theyOwe = people.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0);
@@ -119,7 +153,7 @@ export function Today({
       </section>
 
       {data.needsStart && canWrite && (
-        <a className="banner" href={`/h/${household.id}/family/start`} onClick={onLinkClick}>
+        <a className="banner" href={`/h/${household.id}/settings/start`} onClick={onLinkClick}>
           <Icon.plus />
           <span style={{ flex: "1 1 auto" }}>Start from today: add your balances, fixed deposits and loans, and the numbers are right from day one.</span>
           <Icon.next />
@@ -138,6 +172,23 @@ export function Today({
 
       <div className="columns">
         <div className="main">
+          <section className="card stack" aria-labelledby="month-h">
+            <div className="row between">
+              <h2 id="month-h">{isCurrent ? "This month, day by day" : `${monthName(viewing)}, day by day`}</h2>
+              <span className="small muted">
+                {shortDate(from)} to {shortDate(to)}
+              </span>
+            </div>
+            {isCurrent && budget > 0 && (
+              <Meter value={data.spentMinor} max={budget} tone={paceTone} marker={elapsed} markerLabel="today" left={`Spent ${formatMoney(data.spentMinor, cur)}`} right={`${formatMoney(budget, cur)} for everyday things`} />
+            )}
+            {spendTxs.length > 0 ? (
+              <Lines series={paceSeries} labels={days.map((d) => String(Number(d.slice(8))))} currency={cur} format={(v) => formatMoney(v, cur)} height={160} head="Day" />
+            ) : (
+              <span className="small muted">Nothing spent yet this month. The days fill in as you log.</span>
+            )}
+          </section>
+
           <section className="card book" aria-labelledby="book-h" style={{ paddingTop: 8 }}>
             <div className="row between" style={{ padding: "12px 0 4px" }}>
               <h2 id="book-h">The book</h2>
@@ -188,13 +239,42 @@ export function Today({
               {month && <MonthSwitcher month={month} onChange={(m) => { setMonth(m); setAll(false); }} />}
             </div>
           </section>
+
+          {hasHistory && (
+            <section className="card stack" aria-labelledby="months-h">
+              <div className="row between">
+                <h2 id="months-h">The last six months</h2>
+                <span className="small muted">what came in, what was spent</span>
+              </div>
+              <Lines
+                series={[
+                  { name: "Came in", color: SERIES[0], values: history.map((m) => m.incomeMinor) },
+                  { name: "Spent", color: SERIES[1], values: history.map((m) => m.spentMinor) },
+                ]}
+                labels={history.map((m) => monthName(m.month).slice(0, 3))}
+                currency={cur}
+                format={(v) => formatMoney(v, cur)}
+                height={170}
+              />
+            </section>
+          )}
         </div>
 
         <aside className="side">
+          {topRows.length > 0 && (
+            <section className="card stack" aria-labelledby="where-h">
+              <div className="row between">
+                <h2 id="where-h">Where it went</h2>
+                <span className="small muted">{isCurrent ? "so far" : monthName(viewing)}</span>
+              </div>
+              <Bars rows={topRows} format={(v) => formatMoney(v, cur, { symbol: false })} />
+            </section>
+          )}
+
           <section className="card stack" aria-labelledby="env-h">
             <div className="row between">
               <h2 id="env-h">Envelopes</h2>
-              <a className="small" href={`/h/${household.id}/family/envelopes`} onClick={onLinkClick}>
+              <a className="small" href={`/h/${household.id}/settings/envelopes`} onClick={onLinkClick}>
                 {data.envelopes.length ? "Change" : "Set them"}
               </a>
             </div>
@@ -221,7 +301,7 @@ export function Today({
             <section className="card stack" aria-labelledby="worth-h" style={{ gap: 6 }}>
               <div className="row between">
                 <h2 id="worth-h">What we have</h2>
-                <a className="small" href={`/h/${household.id}/family/accounts`} onClick={onLinkClick}>
+                <a className="small" href={`/h/${household.id}/settings/accounts`} onClick={onLinkClick}>
                   Accounts
                 </a>
               </div>
@@ -296,7 +376,7 @@ export function Today({
             ))}
             <p className="small muted" style={{ margin: "8px 0 0" }}>
               Statements arrive by email and check themselves against the book. Only the odd ones ask for you.{" "}
-              <a href={`/h/${household.id}/family/forwarding`} onClick={onLinkClick}>
+              <a href={`/h/${household.id}/settings/forwarding`} onClick={onLinkClick}>
                 Set up forwarding
               </a>
             </p>

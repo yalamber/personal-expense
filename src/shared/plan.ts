@@ -46,6 +46,8 @@ export type PlanOptions = {
    * fromMonth (YYYY-MM) on, amountMinor a month goes to the first unfinished goal.
    */
   releases?: { fromMonth: string; amountMinor: number }[];
+  /** Also return what each goal holds month by month, for drawing the road. */
+  trajectory?: boolean;
 };
 
 export type GoalOutcome = {
@@ -70,6 +72,8 @@ export type PlanResult = {
   extraMinor: number;
   extraGoalId: string | null;
   outcomes: GoalOutcome[];
+  /** With trajectory: months[0] is the month before money starts; saved[g][i] is goal g's money at the end of months[i]. */
+  trajectory?: { months: string[]; saved: number[][] };
 };
 
 /** Kinds whose price is expected to rise with time. */
@@ -134,6 +138,7 @@ export function simulatePlan(goals: PlanGoal[], options: PlanOptions): PlanResul
 
   // Already there before any new money: month -1 reads as "now".
   goals.forEach((_, i) => markReady(i, -1));
+  const track: number[][] = options.trajectory ? [saved.map((v) => Math.round(v))] : [];
 
   for (let m = 0; m < horizon; m++) {
     const open = goals.map((_, i) => i).filter((i) => doneAt[i] === null);
@@ -154,6 +159,7 @@ export function simulatePlan(goals: PlanGoal[], options: PlanOptions): PlanResul
       saved[i]! += give[i]!;
       markReady(i, m);
     }
+    if (options.trajectory) track.push(saved.map((v) => Math.round(v)));
   }
 
   const label = (m: number | null) => (m === null ? null : m < 0 ? "now" : monthAt(start + m));
@@ -162,6 +168,9 @@ export function simulatePlan(goals: PlanGoal[], options: PlanOptions): PlanResul
     plannedMinor: planned,
     extraMinor: extra,
     extraGoalId: extra > 0 && extraIndex >= 0 ? goals[extraIndex]!.id : null,
+    trajectory: options.trajectory
+      ? { months: track.map((_, i) => monthAt(start + i - 1)), saved: goals.map((_, g) => track.map((row) => row[g]!)) }
+      : undefined,
     outcomes: goals.map((g, i) => {
       const done = label(doneAt[i]!);
       const doneMonth = done === "now" ? monthAt(start - 1) : done;

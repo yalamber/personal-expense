@@ -4,9 +4,9 @@ import { api, ApiError, type Household, type Statement } from "../api";
 import { onLinkClick } from "../router";
 import { Icon } from "../ui";
 
-/** Family: the people, the accounts and the plumbing that keeps the book filling itself. */
-export function Family({ household, onLogout, onChanged }: { household: Household; onLogout: () => void; onChanged: () => void }) {
-  const base = `/h/${household.id}/family`;
+/** Settings: the people, the accounts and the plumbing that keeps the book filling itself. */
+export function Settings({ household, onLogout, onChanged }: { household: Household; onLogout: () => void; onChanged: () => void }) {
+  const base = `/h/${household.id}/settings`;
   const isAdmin = household.me.role === "admin";
   const [payDay, setPayDay] = useState(household.monthStartDay);
   const [notice, setNotice] = useState<string | null>(null);
@@ -38,7 +38,7 @@ export function Family({ household, onLogout, onChanged }: { household: Househol
     <>
       <div className="stack" style={{ gap: 4 }}>
         <span className="eyebrow">{household.name}</span>
-        <h1>Family</h1>
+        <h1>Settings</h1>
       </div>
       <div className="hub">
         {links.map((l) => (
@@ -100,8 +100,8 @@ export function Forwarding({ household }: { household: Household }) {
 
   return (
     <>
-      <a className="back" href={`/h/${household.id}/family`} onClick={onLinkClick}>
-        <Icon.back /> Family
+      <a className="back" href={`/h/${household.id}/settings`} onClick={onLinkClick}>
+        <Icon.back /> Settings
       </a>
       <div className="stack" style={{ gap: 6 }}>
         <h1>Statements by email</h1>
@@ -166,7 +166,7 @@ export function Forwarding({ household }: { household: Household }) {
           <li>
             Make a filter instead, so only bank mail is forwarded: search <span className="mono">from:(alerts@yourbank.example)</span>, choose Create filter, tick <strong>Forward it to</strong> and pick the address.
           </li>
-          <li>In Family › Accounts, put the bank's sender address on the account, so its mail is read rather than held back.</li>
+          <li>In Settings › Accounts, put the bank's sender address on the account, so its mail is read rather than held back.</li>
         </ol>
       </section>
 

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { todayIn } from "../../../shared/dates";
+import { daysBetween } from "../../../shared/deposit";
+import { Meter } from "../charts";
 import { worth } from "../../../shared/worth";
 import { api, ApiError, type Account, type Goal, type Household } from "../api";
 import { onLinkClick } from "../router";
@@ -172,7 +174,7 @@ export function Accounts({ household }: { household: Household }) {
           <strong>No accounts yet.</strong>
           <span className="muted">
             The quickest way in is the{" "}
-            <a href={`/h/${household.id}/family/start`} onClick={onLinkClick}>
+            <a href={`/h/${household.id}/settings/start`} onClick={onLinkClick}>
               starting point
             </a>
             : today's balances, fixed deposits and loans in a couple of minutes.
@@ -201,6 +203,16 @@ export function Accounts({ household }: { household: Household }) {
                       {a.goalName && <span className="pill green" style={{ marginLeft: 6 }}>for {a.goalName}</span>}
                     </strong>
                     <span className="small muted">{accountLine(a, cur)}</span>
+                    {a.type === "deposit" && a.deposit && a.startDate && a.endDate && (
+                      <span style={{ display: "block", maxWidth: 360, marginTop: 6 }}>
+                        <Meter value={Math.max(0, daysBetween(a.startDate, a.endDate) - a.deposit.daysToMaturity)} max={daysBetween(a.startDate, a.endDate)} compact left={`from ${shortDate(a.startDate)}`} right={a.deposit.daysToMaturity > 0 ? `${a.deposit.daysToMaturity} days to go` : "matured"} />
+                      </span>
+                    )}
+                    {a.type === "loan" && a.loan && a.principalMinor && a.principalMinor > 0 && (
+                      <span style={{ display: "block", maxWidth: 360, marginTop: 6 }}>
+                        <Meter value={Math.max(0, a.principalMinor - a.loan.owedMinor)} max={a.principalMinor} compact left={`${formatMoney(Math.max(0, a.principalMinor - a.loan.owedMinor), cur, { symbol: false })} paid off`} right={`of ${formatMoney(a.principalMinor, cur, { symbol: false })}`} />
+                      </span>
+                    )}
                     {a.type === "deposit" && a.deposit && a.deposit.daysToMaturity <= 14 && (
                       <span className="small warn">{a.deposit.daysToMaturity < 0 ? "Matured" : `Matures in ${a.deposit.daysToMaturity} days`}: renew or close it below.</span>
                     )}
