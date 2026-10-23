@@ -552,7 +552,7 @@ main.app {
   }
   .tabbar {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     align-items: center;
     position: fixed;
     left: 0;
@@ -918,6 +918,91 @@ main.app {
     margin-top: auto;
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
   }
+}
+
+/* ---- Khata ------------------------------------------------------------- */
+
+.khata-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+  text-decoration: none;
+  color: inherit;
+  min-height: 64px;
+}
+.khata-row:last-child {
+  border-bottom: 0;
+}
+a.khata-row:hover {
+  background: var(--paper);
+  color: inherit;
+}
+.khata-row .avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  background: var(--wash);
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  flex: none;
+}
+.khata-row .avatar.owe {
+  background: var(--rust-soft);
+  color: var(--rust);
+}
+.khata-row .avatar.owed {
+  background: var(--green-soft);
+  color: var(--green-deep);
+}
+.khata-row .what {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.khata-row .what strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.khata-row .what span {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.khata-row .amount {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 92px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.khata-row .amount .bal {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.khata .day-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.khata-sheet .chips .chip {
+  flex: 1 1 calc(50% - 8px);
+  justify-content: center;
 }
 
 /* ---- Decide ------------------------------------------------------------ */

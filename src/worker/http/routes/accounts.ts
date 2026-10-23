@@ -5,7 +5,7 @@
  * Amounts owed (a credit card, a loan) are typed as positive "what we owe" and kept negative.
  */
 import { Hono } from "hono";
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { addDays, isDate, todayIn } from "../../../shared/dates";
 import { addMonths, parseRate, termMonths } from "../../../shared/deposit";
@@ -172,8 +172,23 @@ async function accountFields(c: AppContext, body: AccountBody, type: AccountType
 }
 
 accountRoutes.get("/accounts", async (c) => {
-  const views = await loadAccountViews(c.get("db"), c.get("household").id, todayIn(c.get("household").timezone));
-  return c.json(views.map((r) => ({ ...r, csvMapping: r.csvMapping ? (JSON.parse(r.csvMapping) as unknown) : null })));
+  const db = c.get("db");
+  const household = c.get("household");
+  const views = await loadAccountViews(db, household.id, todayIn(household.timezone));
+  // Contacts carry their latest entry, so the khata list can say what happened last.
+  const people = views.filter((a) => a.type === "person").map((a) => a.id);
+  const last = new Map<string, { date: string; description: string | null; direction: string; amountMinor: number; transferPairId: string | null }>();
+  if (people.length) {
+    const t = schema.transactions;
+    const rows = await db
+      .select({ accountId: t.accountId, date: t.date, description: t.description, direction: t.direction, amountMinor: t.amountMinor, transferPairId: t.transferPairId })
+      .from(t)
+      .where(and(inArray(t.accountId, people), isNull(t.voidedAt)))
+      .orderBy(desc(t.date), desc(t.createdAt))
+      .limit(400);
+    for (const r of rows) if (!last.has(r.accountId)) last.set(r.accountId, r);
+  }
+  return c.json(views.map((r) => ({ ...r, csvMapping: r.csvMapping ? (JSON.parse(r.csvMapping) as unknown) : null, lastEntry: last.get(r.id) ?? null })));
 });
 
 accountRoutes.post("/accounts", requireWriter, async (c) => {

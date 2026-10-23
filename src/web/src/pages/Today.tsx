@@ -63,6 +63,9 @@ export function Today({
   const nothingYet = data.incomeMinor === 0 && data.spentMinor === 0;
   const over = data.everydayLeftMinor < 0;
   const goalName = (id: string | null) => goals.find((g) => g.id === id)?.name;
+  const people = accounts.filter((a) => a.type === "person" && !a.closedAt);
+  const weOwe = people.reduce((s, a) => s + Math.max(0, -a.balanceMinor), 0);
+  const theyOwe = people.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0);
 
   return (
     <>
@@ -237,6 +240,31 @@ export function Today({
                   <span className="mono amount-in">+{formatMoney(data.worth.accruedMinor, cur, { symbol: false })}</span>
                 </div>
               )}
+            </section>
+          )}
+
+          {people.length > 0 && (
+            <section className="card stack" aria-labelledby="khata-h" style={{ gap: 4 }}>
+              <div className="row between">
+                <h2 id="khata-h">Khata</h2>
+                <a className="small" href={`/h/${household.id}/khata`} onClick={onLinkClick}>
+                  All {people.length}
+                </a>
+              </div>
+              {weOwe > 0 && (
+                <div className="kv">
+                  <span className="muted">We owe</span>
+                  <span className="mono" style={{ color: "var(--rust)" }}>{formatMoney(weOwe, cur, { symbol: false })}</span>
+                </div>
+              )}
+              {theyOwe > 0 && (
+                <div className="kv">
+                  <span className="muted">Owed to us</span>
+                  <span className="mono amount-in">{formatMoney(theyOwe, cur, { symbol: false })}</span>
+                </div>
+              )}
+              {weOwe === 0 && theyOwe === 0 && <span className="small muted">All settled.</span>}
+              {weOwe > 0 && <span className="small muted">{people.filter((a) => a.balanceMinor < 0).sort((a, b) => a.balanceMinor - b.balanceMinor).slice(0, 3).map((a) => a.name).join(", ")}</span>}
             </section>
           )}
 

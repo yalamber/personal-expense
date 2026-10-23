@@ -13,7 +13,7 @@ the Email Worker storing forwarded mail in R2, the statement inbox, nightly hous
 
 **Phase 1, ledger and ingestion: done, with the redesign.**
 
-The app has three spaces plus Family, and Log on every screen:
+The app has four spaces plus Family, and Log on every screen:
 
 - **Today**: what the family can spend per day until payday and stay on plan, the book for the
   month with ✓ (logged by the family) and ✓✓ (confirmed by the bank), envelopes (budgets), which
@@ -27,6 +27,8 @@ The app has three spaces plus Family, and Log on every screen:
 - **Plan**: goals funded in priority order, drawn as one road with a lever for the monthly amount
   and a price-rise guess. Goals have parts (cost items, or stages for a build), wanted-by dates,
   and money moved in from accounts.
+- **Khata**: the family's tabs with shops, relatives and friends, one book per person, with what
+  we owe and what we are owed at the top.
 - **Family**: starting point, forwarding setup, accounts, people, envelopes, inbox, payday,
   CSV export.
 
@@ -46,11 +48,12 @@ has and owes today, so balances, Today and the Plan are right from the first day
   until the book has two months of its own).
 - An account or deposit can be kept for a goal; the goal then counts its balance as saved.
 
-**Contacts (Family › Contacts)** keep a khata per shop, relative or friend: what was owed before
-today, then entries as money goes back and forth (we paid them, we got from them, bought on
-credit, they owe us for something). Each contact shows debit, credit and the running balance:
-"we owe Rs 8,200" or "owes us Rs 15,000". Buying on credit is that month's spending; settling
-the tab later is a move. In Log, a contact appears under "On credit from" and in Move or save.
+**Khata** keeps a book per shop, relative or friend: what was owed before today (brought
+forward), then entries as money goes back and forth (we paid them, we got from them, bought on
+credit, they owe us for something), each with the balance after it: "we owe 8,200" or "owes us
+15,000". The list groups people by who owes whom; a contact's page has one-tap "paid in full" and
+"got it back". Buying on credit is that month's spending and a charge is that month's income;
+settling up later is a move. In Log, a contact appears under "On credit from" and in Move or save.
 
 **Goal payments.** A baina or advance to the land's seller, or a stage paid to the builder, is
 recorded on the goal as "Paid toward it": it counts toward the goal but is not money the family

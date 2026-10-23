@@ -72,6 +72,8 @@ export type Account = {
   closedAt: string | null;
   phone: string | null;
   note: string | null;
+  /** Contacts: what happened last in their khata. */
+  lastEntry: { date: string; description: string | null; direction: "in" | "out" | "transfer"; amountMinor: number; transferPairId: string | null } | null;
   /** Today, from the starting balance; negative for what is owed. */
   balanceMinor: number;
   deposit: { accruedMinor: number; maturityValueMinor: number; totalInterestMinor: number; daysToMaturity: number; termMonths: number } | null;

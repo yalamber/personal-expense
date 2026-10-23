@@ -29,7 +29,6 @@ export function Family({ household, onLogout, onChanged }: { household: Househol
     { href: `${base}/forwarding`, title: "Statements by email", text: "Your forwarding address, Gmail setup and confirmation codes." },
     { href: `${base}/start`, title: "Starting point", text: "Today's balances, fixed deposits, loans and a usual month, so the numbers are right from day one." },
     { href: `${base}/accounts`, title: "Accounts", text: "Bank, savings, FDs, loans and cards: balances, payments, maturities, statement senders and CSV imports." },
-    { href: `${base}/contacts`, title: "Contacts", text: "Shops, relatives and friends: a khata of what we owe each one and what they owe us." },
     { href: `${base}/people`, title: "People", text: "Who can see and log money, and who can only look." },
     { href: `${base}/envelopes`, title: "Envelopes", text: "Monthly amounts for the categories you want to watch." },
     { href: `${base}/inbox`, title: "Inbox", text: "Every email and file that has arrived, and what happened to it." },

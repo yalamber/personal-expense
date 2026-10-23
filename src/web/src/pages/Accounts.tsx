@@ -142,9 +142,9 @@ export function Accounts({ household }: { household: Household }) {
       )}
 
       {contacts.length > 0 && (
-        <a className="card row between" href={`/h/${household.id}/family/contacts`} onClick={onLinkClick} style={{ flexWrap: "nowrap", textDecoration: "none", color: "inherit" }}>
+        <a className="card row between" href={`/h/${household.id}/khata`} onClick={onLinkClick} style={{ flexWrap: "nowrap", textDecoration: "none", color: "inherit" }}>
           <span>
-            <strong>Contacts</strong>{" "}
+            <strong>Khata</strong>{" "}
             <span className="small muted">
             · {contacts.length} · we owe {formatMoney(contacts.reduce((s, a) => s + Math.max(0, -a.balanceMinor), 0), cur)} · owed to us{" "}
             {formatMoney(contacts.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0), cur)}

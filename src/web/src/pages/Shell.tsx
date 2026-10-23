@@ -4,7 +4,7 @@ import { navigate, onLinkClick } from "../router";
 import { Icon } from "../ui";
 import { Accounts } from "./Accounts";
 import { Budgets } from "./Budgets";
-import { ContactDetail, Contacts } from "./Contacts";
+import { Khata, KhataPage } from "./Khata";
 import { Decide } from "./Decide";
 import { Family, Forwarding } from "./Family";
 import { GoalDetail } from "./GoalDetail";
@@ -17,12 +17,13 @@ import { StartingPoint } from "./StartingPoint";
 import { Today } from "./Today";
 
 /** Old addresses from the first version keep working. */
-const LEGACY: Record<string, string> = { "/review": "/decide", "/budgets": "/family/envelopes", "/inbox": "/family/inbox", "/accounts": "/family/accounts", "/members": "/family/people" };
+const LEGACY: Record<string, string> = { "/review": "/decide", "/budgets": "/family/envelopes", "/inbox": "/family/inbox", "/accounts": "/family/accounts", "/members": "/family/people", "/family/contacts": "/khata" };
 
-type Space = "today" | "plan" | "decide" | "family";
+type Space = "today" | "plan" | "khata" | "decide" | "family";
 
 function spaceOf(sub: string): Space {
   if (sub.startsWith("/plan")) return "plan";
+  if (sub.startsWith("/khata")) return "khata";
   if (sub.startsWith("/decide")) return "decide";
   if (sub.startsWith("/family")) return "family";
   return "today";
@@ -45,6 +46,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
 
   useEffect(() => {
     if (LEGACY[sub]) navigate(`/h/${householdId}${LEGACY[sub]}`);
+    else if (sub.startsWith("/family/contacts/")) navigate(`/h/${householdId}/khata/${sub.slice("/family/contacts/".length)}`);
   }, [sub, householdId]);
 
   const loadBasics = useCallback(async () => {
@@ -80,7 +82,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
   const space = spaceOf(sub);
   const base = `/h/${householdId}`;
   const goalMatch = sub.match(/^\/plan\/goals\/([^/]+)$/);
-  const contactMatch = sub.match(/^\/family\/contacts\/([^/]+)$/);
+  const contactMatch = sub.match(/^\/khata\/([^/]+)$/);
   const canWrite = household ? household.me.role !== "viewer" : false;
   const tab = (s: Space) => (space === s ? ("page" as const) : undefined);
 
@@ -100,6 +102,9 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
             </a>
             <a href={`${base}/plan`} aria-current={tab("plan")} onClick={onLinkClick}>
               Plan
+            </a>
+            <a href={`${base}/khata`} aria-current={tab("khata")} onClick={onLinkClick}>
+              Khata
             </a>
             <a href={`${base}/decide`} aria-current={tab("decide")} onClick={onLinkClick}>
               Decide {decideCount > 0 && <span className="count">{decideCount}</span>}
@@ -132,15 +137,15 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
         {household && space === "decide" && <Decide household={household} accounts={accounts} categories={categories} version={version} onChanged={changed} />}
         {household && sub === "/family" && <Family household={household} onLogout={onLogout} onChanged={changed} />}
         {household && sub === "/family/forwarding" && <Forwarding household={household} />}
-        {household && contactMatch && <ContactDetail household={household} contactId={contactMatch[1]!} categories={categories} onChanged={changed} />}
-        {household && sub.startsWith("/family/") && sub !== "/family/forwarding" && !contactMatch && (
+        {household && sub === "/khata" && <Khata household={household} onChanged={changed} />}
+        {household && contactMatch && <KhataPage household={household} contactId={contactMatch[1]!} categories={categories} onChanged={changed} />}
+        {household && sub.startsWith("/family/") && sub !== "/family/forwarding" && (
           <>
             <a className="back" href={`${base}/family`} onClick={onLinkClick}>
               <Icon.back /> Family
             </a>
             {sub === "/family/start" && <StartingPoint household={household} onChanged={changed} />}
             {sub === "/family/accounts" && <Accounts household={household} />}
-            {sub === "/family/contacts" && <Contacts household={household} />}
             {sub === "/family/people" && <Members household={household} />}
             {sub === "/family/envelopes" && <Budgets household={household} />}
             {sub === "/family/inbox" && <Inbox household={household} />}
@@ -164,6 +169,10 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
         ) : (
           <span />
         )}
+        <a href={`${base}/khata`} aria-current={tab("khata")} onClick={onLinkClick}>
+          <Icon.khata />
+          Khata
+        </a>
         <a href={`${base}/decide`} aria-current={tab("decide")} onClick={onLinkClick}>
           {decideCount > 0 && <span className="badge">{decideCount}</span>}
           <Icon.decide />

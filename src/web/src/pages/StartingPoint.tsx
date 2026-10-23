@@ -143,10 +143,10 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
             {s.id === "owed" && (
               <span className="small muted">
                 A running tab with a shop, relative or friend?{" "}
-                <a href={`/h/${household.id}/family/contacts`} onClick={onLinkClick}>
-                  {contacts.length ? `Contacts (${contacts.length})` : "Add them as contacts"}
+                <a href={`/h/${household.id}/khata`} onClick={onLinkClick}>
+                  {contacts.length ? `Khata (${contacts.length})` : "Add them to the khata"}
                 </a>
-                , each with its own khata.
+                , a book per person.
               </span>
             )}
           </section>
