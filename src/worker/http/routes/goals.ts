@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { isDate, shiftMonth, todayIn } from "../../../shared/dates";
-import { parseAmountToMinor } from "../../../shared/money";
+import { formatMinor, parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
 import { loadAccountViews, loadGoals, loanCommitments, monthlyBasis, spareAfter } from "../../ledger/overview";
@@ -87,6 +87,7 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
     wantedBy?: string;
     monthly?: string;
     saved?: string;
+    paid?: string;
     note?: string;
     linkedAccountId?: string | null;
     parts?: { name?: string; amount?: string }[];
@@ -109,7 +110,8 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
   if (!target) return c.json({ error: "how much does it cost? add an amount or its parts" }, 400);
   const monthly = money(c, body.monthly);
   const saved = money(c, body.saved);
-  if (monthly === null || saved === null) return c.json({ error: "amounts must be positive" }, 400);
+  const paid = money(c, body.paid);
+  if (monthly === null || saved === null || paid === null) return c.json({ error: "amounts must be positive" }, 400);
   if (body.linkedAccountId) {
     const a = await db.query.accounts.findFirst({ where: and(eq(schema.accounts.id, body.linkedAccountId), eq(schema.accounts.householdId, household.id)), columns: { id: true } });
     if (!a) return c.json({ error: "account not found" }, 404);
@@ -135,6 +137,11 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
   if (saved) {
     statements.push(
       db.insert(schema.goalContributions).values({ id: newId(), goalId, date: todayIn(household.timezone), amountMinor: saved, note: "Already saved", memberId: c.get("member").id }),
+    );
+  }
+  if (paid) {
+    statements.push(
+      db.insert(schema.goalContributions).values({ id: newId(), goalId, date: todayIn(household.timezone), amountMinor: paid, note: "Already paid", kind: "paid", memberId: c.get("member").id }),
     );
   }
   await db.batch(statements as [BatchItem<"sqlite">, ...BatchItem<"sqlite">[]]);
@@ -278,6 +285,7 @@ goalRoutes.get("/goals/:goalId/contributions", async (c) => {
       note: schema.goalContributions.note,
       memberName: schema.members.name,
       transactionId: schema.goalContributions.transactionId,
+      kind: schema.goalContributions.kind,
     })
     .from(schema.goalContributions)
     .leftJoin(schema.members, eq(schema.members.id, schema.goalContributions.memberId))
@@ -288,34 +296,49 @@ goalRoutes.get("/goals/:goalId/contributions", async (c) => {
 });
 
 /**
- * Money toward a goal. With a from-account it is also real money leaving that account: a transfer
- * into the goal's own account when it has one, otherwise money out filed under savings (so it is
+ * Money toward a goal.
+ *
+ * Saved (the default): with a from-account it is real money leaving that account, a transfer into
+ * the goal's own account when it has one, otherwise money out filed under savings (so it is
  * "saved", not "spent"). Without a from-account it only records money already set aside.
+ *
+ * Paid (kind "paid"): money already paid toward it, such as a baina to the land's seller. From an
+ * account it is money out of that account filed under savings; with fromSaved it comes out of the
+ * money recorded as saved for the goal; with neither it was paid before the book started.
  */
 goalRoutes.post("/goals/:goalId/contributions", requireWriter, async (c) => {
   const db = c.get("db");
   const household = c.get("household");
   const goal = await findGoal(c, c.req.param("goalId"));
   if (!goal || goal.archivedAt) return c.json({ error: "not found" }, 404);
-  const body = await readJson<{ amount?: string; date?: string; note?: string; fromAccountId?: string | null }>(c);
+  const body = await readJson<{ amount?: string; date?: string; note?: string; fromAccountId?: string | null; kind?: string; fromSaved?: boolean }>(c);
   const amount = money(c, body.amount);
   if (!amount) return c.json({ error: "enter an amount" }, 400);
   const date = body.date ?? todayIn(household.timezone);
   if (!isDate(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
   const note = (body.note ?? "").trim() || null;
   const memberId = c.get("member").id;
+  const paying = body.kind === "paid";
+  let kind: (typeof schema.contributionKinds)[number] = paying ? "paid" : "saved";
 
   let transactionId: string | null = null;
-  if (body.fromAccountId) {
+  if (paying && body.fromSaved) {
+    const [view] = (await loadGoals(db, household.id, todayIn(household.timezone), { includeArchived: true })).filter((g) => g.id === goal.id);
+    if (!view || view.savedFrom !== "records") return c.json({ error: "this goal's money is in an account; choose that account instead" }, 400);
+    if (amount > view.heldMinor) return c.json({ error: `only ${formatMinor(view.heldMinor, household.currency, "en-IN")} is saved for it` }, 400);
+    kind = "paid_from_saved";
+  } else if (body.fromAccountId) {
     const from = await db.query.accounts.findFirst({ where: and(eq(schema.accounts.id, body.fromAccountId), eq(schema.accounts.householdId, household.id)), columns: { id: true } });
     if (!from) return c.json({ error: "account not found" }, 404);
     // Money goes into the goal's own account: the one chosen for it, or one that holds its money
-    // and can take deposits (not a fixed deposit mid-term).
-    const holder = await db.query.accounts.findFirst({
-      where: and(eq(schema.accounts.householdId, household.id), eq(schema.accounts.goalId, goal.id), isNull(schema.accounts.closedAt), inArray(schema.accounts.type, ["savings", "checking", "cash", "wallet"])),
-      columns: { id: true },
-    });
-    const target = goal.linkedAccountId ?? holder?.id ?? null;
+    // and can take deposits (not a fixed deposit mid-term). A payment goes out to the seller instead.
+    const holder = paying
+      ? null
+      : await db.query.accounts.findFirst({
+          where: and(eq(schema.accounts.householdId, household.id), eq(schema.accounts.goalId, goal.id), isNull(schema.accounts.closedAt), inArray(schema.accounts.type, ["savings", "checking", "cash", "wallet"])),
+          columns: { id: true },
+        });
+    const target = paying ? null : goal.linkedAccountId ?? holder?.id ?? null;
     if (target && target !== from.id) {
       const t = await createTransfer(db, { householdId: household.id, fromAccountId: from.id, toAccountId: target, amountMinor: amount, date, note, memberId, goalId: goal.id, description: `To ${goal.name}` });
       transactionId = t.outId;
@@ -327,7 +350,7 @@ goalRoutes.post("/goals/:goalId/contributions", requireWriter, async (c) => {
         amountMinor: amount,
         direction: "out",
         categoryId: await savingCategoryId(c),
-        description: `To ${goal.name}`,
+        description: paying ? `Paid toward ${goal.name}` : `To ${goal.name}`,
         note,
         paidByMemberId: memberId,
         source: "manual",
@@ -338,8 +361,8 @@ goalRoutes.post("/goals/:goalId/contributions", requireWriter, async (c) => {
     }
   }
   const id = newId();
-  await db.insert(schema.goalContributions).values({ id, goalId: goal.id, date, amountMinor: amount, note, transactionId, memberId });
-  return c.json({ id, transactionId }, 201);
+  await db.insert(schema.goalContributions).values({ id, goalId: goal.id, date, amountMinor: amount, note, transactionId, memberId, kind });
+  return c.json({ id, transactionId, kind }, 201);
 });
 
 goalRoutes.delete("/goal-contributions/:id", requireWriter, async (c) => {

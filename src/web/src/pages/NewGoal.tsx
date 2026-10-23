@@ -34,6 +34,7 @@ export function NewGoal({ household, accounts }: { household: Household; account
   const [months, setMonths] = useState(6);
   const [wantedBy, setWantedBy] = useState(addDays(today, 365 * 3).slice(0, 7));
   const [saved, setSaved] = useState("");
+  const [paid, setPaid] = useState("");
   const [monthly, setMonthly] = useState("");
   const [account, setAccount] = useState("");
   const [busy, setBusy] = useState(false);
@@ -58,7 +59,7 @@ export function NewGoal({ household, accounts }: { household: Household; account
   const minor = (v: string) => (v.trim() ? parseAmountToMinor(v, cur) ?? 0 : 0);
   const partsTotal = parts.reduce((s, p) => s + Math.max(0, minor(p.amount)), 0);
   const targetMinor = tpl.kind === "safety" && essentials ? essentials * months : parts.some((p) => p.amount.trim()) ? partsTotal : minor(target);
-  const savedMinor = Math.max(0, minor(saved));
+  const savedMinor = Math.max(0, minor(saved)) + Math.max(0, minor(paid));
   const monthlyMinor = Math.max(0, minor(monthly));
   const monthsLeft = plan ? Math.max(1, monthsBetween(plan.startMonth, wantedBy) + 1) : 1;
   const neededMinor = Math.max(0, Math.ceil((targetMinor - savedMinor) / monthsLeft));
@@ -84,6 +85,7 @@ export function NewGoal({ household, accounts }: { household: Household; account
         wantedBy,
         monthly,
         saved,
+        paid,
         linkedAccountId: account || null,
         parts: filled,
       });
@@ -126,6 +128,12 @@ export function NewGoal({ household, accounts }: { household: Household; account
           Already saved
           <input inputMode="decimal" placeholder="0" value={saved} onChange={(e) => setSaved(e.target.value)} />
         </label>
+        {tpl.kind !== "safety" && (
+          <label style={{ flex: "1 1 160px" }}>
+            {tpl.kind === "build" ? "Already paid to the builder" : tpl.kind === "education" ? "Fees already paid" : "Already paid (baina, advance)"}
+            <input inputMode="decimal" placeholder="0" value={paid} onChange={(e) => setPaid(e.target.value)} />
+          </label>
+        )}
       </div>
 
       {tpl.kind === "safety" ? (
@@ -192,7 +200,7 @@ export function NewGoal({ household, accounts }: { household: Household; account
           Keep the money in
           <select value={account} onChange={(e) => setAccount(e.target.value)}>
             <option value="">Just track it</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {accounts.filter((a) => !a.closedAt && ["checking", "savings", "cash", "wallet", "deposit"].includes(a.type)).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
       </div>

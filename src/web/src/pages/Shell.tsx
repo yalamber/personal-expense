@@ -4,6 +4,7 @@ import { navigate, onLinkClick } from "../router";
 import { Icon } from "../ui";
 import { Accounts } from "./Accounts";
 import { Budgets } from "./Budgets";
+import { ContactDetail, Contacts } from "./Contacts";
 import { Decide } from "./Decide";
 import { Family, Forwarding } from "./Family";
 import { GoalDetail } from "./GoalDetail";
@@ -79,6 +80,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
   const space = spaceOf(sub);
   const base = `/h/${householdId}`;
   const goalMatch = sub.match(/^\/plan\/goals\/([^/]+)$/);
+  const contactMatch = sub.match(/^\/family\/contacts\/([^/]+)$/);
   const canWrite = household ? household.me.role !== "viewer" : false;
   const tab = (s: Space) => (space === s ? ("page" as const) : undefined);
 
@@ -130,13 +132,15 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
         {household && space === "decide" && <Decide household={household} accounts={accounts} categories={categories} version={version} onChanged={changed} />}
         {household && sub === "/family" && <Family household={household} onLogout={onLogout} onChanged={changed} />}
         {household && sub === "/family/forwarding" && <Forwarding household={household} />}
-        {household && sub.startsWith("/family/") && sub !== "/family/forwarding" && (
+        {household && contactMatch && <ContactDetail household={household} contactId={contactMatch[1]!} categories={categories} onChanged={changed} />}
+        {household && sub.startsWith("/family/") && sub !== "/family/forwarding" && !contactMatch && (
           <>
             <a className="back" href={`${base}/family`} onClick={onLinkClick}>
               <Icon.back /> Family
             </a>
             {sub === "/family/start" && <StartingPoint household={household} onChanged={changed} />}
             {sub === "/family/accounts" && <Accounts household={household} />}
+            {sub === "/family/contacts" && <Contacts household={household} />}
             {sub === "/family/people" && <Members household={household} />}
             {sub === "/family/envelopes" && <Budgets household={household} />}
             {sub === "/family/inbox" && <Inbox household={household} />}

@@ -222,12 +222,12 @@ export function Today({
               </div>
               <span className="display" style={{ fontSize: 26 }}>{formatMoney(data.worth.netMinor, cur)}</span>
               <div className="kv small">
-                <span className="muted">Held, FDs included</span>
+                <span className="muted">Held, with FDs and money owed to us</span>
                 <span className="mono">{formatMoney(data.worth.haveMinor, cur, { symbol: false })}</span>
               </div>
               {data.worth.oweMinor !== 0 && (
                 <div className="kv small">
-                  <span className="muted">Owed on loans and cards</span>
+                  <span className="muted">Owed on loans, cards and to people</span>
                   <span className="mono" style={{ color: "var(--rust)" }}>−{formatMoney(data.worth.oweMinor, cur, { symbol: false })}</span>
                 </div>
               )}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { worth } from "../../../shared/worth";
 import { api, ApiError, type Account, type AccountType, type Goal, type Household } from "../api";
 import { onLinkClick } from "../router";
 import { amountInput, formatMoney } from "../ui";
@@ -70,9 +71,8 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
   }
 
   const list = accounts ?? [];
-  const owedType = (t: AccountType) => t === "credit" || t === "loan";
-  const have = list.filter((a) => !owedType(a.type)).reduce((s, a) => s + a.balanceMinor, 0);
-  const owe = list.filter((a) => owedType(a.type)).reduce((s, a) => s - a.balanceMinor, 0);
+  const { haveMinor: have, oweMinor: owe } = worth(list);
+  const contacts = list.filter((a) => a.type === "person");
   const done = (s: Step) => list.some((a) => s.types.includes(a.type));
   const holders = list.filter((a) => ["checking", "savings", "cash", "wallet", "deposit"].includes(a.type));
   const progress = STEPS.filter(done).length + (typicalSaved ? 1 : 0);
@@ -140,6 +140,15 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
                 </button>
               ))}
             {s.id === "owed" && !rows.length && <span className="small muted">Nothing owed? Skip this one.</span>}
+            {s.id === "owed" && (
+              <span className="small muted">
+                A running tab with a shop, relative or friend?{" "}
+                <a href={`/h/${household.id}/family/contacts`} onClick={onLinkClick}>
+                  {contacts.length ? `Contacts (${contacts.length})` : "Add them as contacts"}
+                </a>
+                , each with its own khata.
+              </span>
+            )}
           </section>
         );
       })}
@@ -195,6 +204,7 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
               </select>
             </div>
           ))}
+          <span className="small muted">Already given a baina or an advance? Open the goal on the Plan and choose Add money › Paid toward it.</span>
         </section>
       )}
 

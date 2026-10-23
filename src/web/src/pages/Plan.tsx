@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { lateLabel, monthName, simulatePlan, spanLabel, type GoalOutcome, type PlanGoal } from "../../../shared/plan";
 import { minorDigits, parseAmountToMinor } from "../../../shared/money";
 import { rateLabel } from "../../../shared/deposit";
+import { worth } from "../../../shared/worth";
 import { api, ApiError, type Account, type Goal, type Household, type PlanData } from "../api";
 import { onLinkClick } from "../router";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
@@ -163,7 +164,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
       title: g.kind === "build" ? `${g.name}: moving in` : g.name,
       chip: o.doneMonth === null ? "out of reach" : o.lateMonths === null ? (g.wantedBy ? null : "no date set") : lateLabel(o.lateMonths),
       chipTone: o.doneMonth === null || late ? "amber" : o.lateMonths === null ? "grey" : "green",
-      note: `${formatMoney(g.savedMinor, cur)} of ${formatMoney(o.finalTargetMinor, cur)}${o.finalTargetMinor !== g.targetMinor ? " at the risen price" : ""} · ${g.monthlyPlanMinor ? `${formatMoney(g.monthlyPlanMinor, cur)} a month of its own` : "gets money when it is its turn"}${g.wantedBy ? ` · wanted by ${monthName(g.wantedBy)}` : ""}`,
+      note: `${formatMoney(g.savedMinor, cur)} of ${formatMoney(o.finalTargetMinor, cur)}${g.paidMinor ? ` (${formatMoney(g.paidMinor, cur)} already paid)` : ""}${o.finalTargetMinor !== g.targetMinor ? " at the risen price" : ""} · ${g.monthlyPlanMinor ? `${formatMoney(g.monthlyPlanMinor, cur)} a month of its own` : "gets money when it is its turn"}${g.wantedBy ? ` · wanted by ${monthName(g.wantedBy)}` : ""}`,
       Icon: g.kind === "build" ? Icon.house : KindIcon,
     });
   }
@@ -363,9 +364,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
 function WhatWeHave({ household, accounts }: { household: Household; accounts: Account[] }) {
   const cur = household.currency;
   if (!accounts.length) return null;
-  const owed = (a: Account) => a.type === "credit" || a.type === "loan";
-  const have = accounts.filter((a) => !owed(a)).reduce((s, a) => s + a.balanceMinor, 0);
-  const owe = accounts.filter(owed).reduce((s, a) => s - a.balanceMinor, 0);
+  const { haveMinor: have, oweMinor: owe } = worth(accounts);
   const deposits = accounts.filter((a) => a.type === "deposit" && a.deposit).sort((a, b) => (a.endDate ?? "").localeCompare(b.endDate ?? ""));
   const loans = accounts.filter((a) => a.type === "loan" && a.balanceMinor < 0);
   return (

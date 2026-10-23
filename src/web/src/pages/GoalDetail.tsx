@@ -19,6 +19,7 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
   const [from, setFrom] = useState("");
   const [date, setDate] = useState(today);
   const [moneyNote, setMoneyNote] = useState("");
+  const [mode, setMode] = useState<"saved" | "paid">("saved");
   const [newPart, setNewPart] = useState({ name: "", amount: "" });
 
   const load = useCallback(async () => {
@@ -97,6 +98,22 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
             <div className="progress" aria-hidden="true">
               <div style={{ width: `${pct}%` }} />
             </div>
+            {goal.paidMinor > 0 && (
+              <dl className="ledger-sum" style={{ borderTopWidth: 1 }}>
+                <div>
+                  <dt>{paidLabel(goal.kind)}</dt>
+                  <dd>{formatMoney(goal.paidMinor, cur, { symbol: false })}</dd>
+                </div>
+                <div>
+                  <dt>Saved for it</dt>
+                  <dd>{formatMoney(goal.heldMinor, cur, { symbol: false })}</dd>
+                </div>
+                <div>
+                  <dt>Still to find</dt>
+                  <dd>{formatMoney(Math.max(0, goal.targetMinor - goal.savedMinor), cur, { symbol: false })}</dd>
+                </div>
+              </dl>
+            )}
             {goal.savedFrom === "accounts" && (
               <div className="stack" style={{ gap: 4 }}>
                 <span className="small muted">Kept in {goal.accounts.length === 1 ? "this account" : "these accounts"}, so the saved figure is their balance today:</span>
@@ -202,16 +219,19 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
             {history.map((c) => (
               <div key={c.id} className="kv">
                 <span className="stack" style={{ gap: 0 }}>
-                  <span style={{ fontWeight: 500 }}>{c.note ?? (c.transactionId ? "Moved from an account" : "Set aside")}</span>
+                  <span style={{ fontWeight: 500 }}>
+                    {c.kind !== "saved" && <span className="pill amber" style={{ marginRight: 6 }}>paid</span>}
+                    {c.note ?? (c.kind !== "saved" ? (c.kind === "paid_from_saved" ? "Paid from the money saved for it" : c.transactionId ? "Paid from an account" : "Paid before the book") : c.transactionId ? "Moved from an account" : "Set aside")}
+                  </span>
                   <span className="small muted">
                     {shortDate(c.date)}
                     {c.memberName ? ` · ${c.memberName}` : ""}
                   </span>
                 </span>
                 <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
-                  <span className="mono amount-in">{formatMoney(c.amountMinor, cur, { sign: true, symbol: false })}</span>
+                  <span className={`mono ${c.kind === "saved" ? "amount-in" : ""}`}>{formatMoney(c.amountMinor, cur, { sign: c.kind === "saved", symbol: false })}</span>
                   {canWrite && (
-                    <button type="button" className="icon-button" aria-label="Remove this" onClick={() => window.confirm("Remove this money from the goal? A linked move between accounts is removed too.") && run(() => api.removeContribution(household.id, c.id))}>
+                    <button type="button" className="icon-button" aria-label="Remove this" onClick={() => window.confirm(c.kind === "saved" ? "Remove this money from the goal? A linked move between accounts is removed too." : "Remove this payment? Money it took out of an account goes back.") && run(() => api.removeContribution(household.id, c.id))}>
                       <Icon.close size={16} />
                     </button>
                   )}
@@ -228,22 +248,46 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
               aria-labelledby="add-h"
               onSubmit={(e) => {
                 e.preventDefault();
-                void run(() => api.addContribution(household.id, goal.id, { amount, date, note: moneyNote, fromAccountId: from || null }), "Added to the goal.").then(() => {
+                const fromSaved = mode === "paid" && from === "saved";
+                const body = { amount, date, note: moneyNote, kind: mode, fromSaved, fromAccountId: fromSaved || !from ? null : from };
+                void run(() => api.addContribution(household.id, goal.id, body), mode === "paid" ? "Payment recorded." : "Added to the goal.").then(() => {
                   setAmount("");
                   setMoneyNote("");
                 });
               }}
             >
               <h2 id="add-h">Add money</h2>
+              <div className="chips" role="group" aria-label="What kind of money">
+                <button type="button" className="chip" aria-pressed={mode === "saved"} onClick={() => { setMode("saved"); setFrom(""); }}>
+                  Saved for it
+                </button>
+                <button type="button" className="chip" aria-pressed={mode === "paid"} onClick={() => { setMode("paid"); setFrom(""); }}>
+                  {goal.kind === "build" ? "Paid the builder" : goal.kind === "education" ? "Paid fees" : "Paid toward it"}
+                </button>
+              </div>
+              <span className="small muted">
+                {mode === "paid"
+                  ? goal.kind === "purchase"
+                    ? "A baina or advance already given to the seller. It counts toward the goal but is no longer money you hold."
+                    : "Money already paid toward it. It counts toward the goal but is no longer money you hold."
+                  : "Money set aside for it, from an account or already kept somewhere."}
+              </span>
               <label>
                 Amount
                 <input required inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
               </label>
               <label>
-                From
+                {mode === "paid" ? "Paid from" : "From"}
                 <select value={from} onChange={(e) => setFrom(e.target.value)}>
-                  <option value="">Already set aside (no account)</option>
-                  {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {mode === "paid" ? (
+                    <>
+                      <option value="">Before we started the book</option>
+                      {goal.savedFrom === "records" && goal.heldMinor > 0 && <option value="saved">The money saved for it ({formatMoney(goal.heldMinor, cur)})</option>}
+                    </>
+                  ) : (
+                    <option value="">Already set aside (no account)</option>
+                  )}
+                  {accounts.filter((a) => !a.closedAt && a.type !== "loan" && a.type !== "lent" && a.type !== "person").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </label>
               <label>
@@ -252,9 +296,9 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
               </label>
               <label>
                 Note
-                <input value={moneyNote} onChange={(e) => setMoneyNote(e.target.value)} placeholder="Dashain bonus" />
+                <input value={moneyNote} onChange={(e) => setMoneyNote(e.target.value)} placeholder={mode === "paid" ? (goal.kind === "purchase" ? "Baina to the seller" : "First stage") : "Dashain bonus"} />
               </label>
-              <button type="submit">Add to {goal.name}</button>
+              <button type="submit">{mode === "paid" ? "Record the payment" : `Add to ${goal.name}`}</button>
             </form>
           )}
 
@@ -265,6 +309,10 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
       </div>
     </>
   );
+}
+
+function paidLabel(kind: Goal["kind"]): string {
+  return kind === "build" ? "Paid to the builder" : kind === "education" ? "Fees paid" : kind === "purchase" ? "Paid to the seller" : "Paid already";
 }
 
 function GoalSettings({ household, goal, accounts, run }: { household: Household; goal: Goal; accounts: Account[]; run: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
@@ -317,7 +365,7 @@ function GoalSettings({ household, goal, accounts, run }: { household: Household
         Money kept in
         <select value={linked} onChange={(e) => setLinked(e.target.value)}>
           <option value="">Just tracked</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          {accounts.filter((a) => !a.closedAt && ["checking", "savings", "cash", "wallet", "deposit"].includes(a.type)).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </label>
       <button type="submit" className="secondary">

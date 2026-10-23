@@ -102,7 +102,7 @@ export function Inbox({ household }: { household: Household }) {
                         <div className="row" style={{ marginTop: 6 }}>
                           <select aria-label="Attach to account" defaultValue="" onChange={(e) => e.target.value && release(st, e.target.value)}>
                             <option value="">Attach and process…</option>
-                            {accounts.map((a) => (
+                            {accounts.filter((a) => ["checking", "savings", "credit", "wallet"].includes(a.type) && !a.closedAt).map((a) => (
                               <option key={a.id} value={a.id}>
                                 {a.name}
                               </option>

@@ -17,11 +17,12 @@ export const TYPES: { type: AccountType; label: string; group: Group; hint: stri
   { type: "wallet", label: "Wallet", group: "everyday", hint: "eSewa, Khalti and the like" },
   { type: "deposit", label: "Fixed deposit", group: "saved", hint: "Money locked in for a term" },
   { type: "credit", label: "Credit card", group: "owed", hint: "What is owed on a card" },
-  { type: "loan", label: "Loan we owe", group: "owed", hint: "Home, car, personal or friendly loan" },
-  { type: "lent", label: "Money we lent", group: "lent", hint: "A loan we gave someone" },
+  { type: "loan", label: "Loan we owe", group: "owed", hint: "Home, car or personal loan, or a friendly loan with a fixed sum" },
+  { type: "lent", label: "Money we lent", group: "lent", hint: "A sum lent to someone, to be repaid" },
+  { type: "person", label: "Contact", group: "people", hint: "A shop, relative or friend we run a tab with" },
 ];
 
-export type Group = "everyday" | "saved" | "lent" | "owed";
+export type Group = "everyday" | "saved" | "lent" | "owed" | "people";
 export const GROUPS: { id: Group; label: string }[] = [
   { id: "everyday", label: "Everyday money" },
   { id: "saved", label: "Savings and deposits" },
@@ -142,7 +143,7 @@ export function AccountForm({
     <form className="card stack" onSubmit={submit} aria-label={a ? `Edit ${a.name}` : "Add an account"}>
       {!a && (
         <div className="chips" role="group" aria-label="Kind of account">
-          {(types ?? TYPES.map((t) => t.type)).map((t) => (
+          {(types ?? TYPES.filter((t) => t.group !== "people").map((t) => t.type)).map((t) => (
             <button key={t} type="button" className="chip" aria-pressed={type === t} onClick={() => setType(t)}>
               {typeInfo(t).label}
             </button>
@@ -310,7 +311,7 @@ export function AccountForm({
 }
 
 function placeholderName(t: AccountType): string {
-  return { checking: "Salary account", savings: "Joint savings", cash: "Cash at home", wallet: "eSewa", deposit: "Land FD", credit: "Joint card", loan: "Home loan", lent: "Loan to Ram" }[t];
+  return { checking: "Salary account", savings: "Joint savings", cash: "Cash at home", wallet: "eSewa", deposit: "Land FD", credit: "Joint card", loan: "Home loan", lent: "Loan to Ram", person: "Ram Kirana" }[t];
 }
 
 function defaultName(t: AccountType, institution: string): string {

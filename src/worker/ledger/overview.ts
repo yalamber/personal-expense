@@ -189,10 +189,14 @@ export type GoalView = {
   note: string | null;
   completedAt: string | null;
   /**
-   * What is saved: the balances of the accounts that hold this goal's money when it has any (an
-   * FD, a savings account), otherwise the money recorded toward it.
+   * How far along it is: money held for it plus money already paid toward it. Held is the balance
+   * of the accounts that keep its money when it has any (an FD, a savings account), otherwise the
+   * money recorded as saved.
    */
   savedMinor: number;
+  heldMinor: number;
+  /** Already paid toward it: a baina or advance to the seller, a stage paid to the builder. */
+  paidMinor: number;
   savedFrom: "accounts" | "records";
   accounts: { id: string; name: string; type: string; balanceMinor: number }[];
   parts: GoalPart[];
@@ -208,18 +212,20 @@ export async function loadGoals(db: Db, householdId: string, today: string, opts
   const ids = goals.map((g) => g.id);
   const [saved, parts, holders, balances] = await Promise.all([
     db
-      .select({ goalId: schema.goalContributions.goalId, total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
+      .select({ goalId: schema.goalContributions.goalId, kind: schema.goalContributions.kind, total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
       .from(schema.goalContributions)
       .where(inArray(schema.goalContributions.goalId, ids))
-      .groupBy(schema.goalContributions.goalId),
+      .groupBy(schema.goalContributions.goalId, schema.goalContributions.kind),
     db.query.goalParts.findMany({ where: inArray(schema.goalParts.goalId, ids), orderBy: [asc(schema.goalParts.sort), asc(schema.goalParts.name)] }),
     db.query.accounts.findMany({ where: and(eq(schema.accounts.householdId, householdId), inArray(schema.accounts.goalId, ids), isNull(schema.accounts.closedAt)) }),
     accountBalances(db, householdId, today),
   ]);
-  const savedBy = new Map(saved.map((s) => [s.goalId, Number(s.total)]));
+  const total = (goalId: string, kind: (typeof schema.contributionKinds)[number]) => Number(saved.find((s) => s.goalId === goalId && s.kind === kind)?.total ?? 0);
   return goals.map((g) => {
     const accounts = holders.filter((a) => a.goalId === g.id).map((a) => ({ id: a.id, name: a.name, type: a.type, balanceMinor: balances.get(a.id) ?? 0 }));
     const fromAccounts = accounts.length > 0;
+    const paid = total(g.id, "paid") + total(g.id, "paid_from_saved");
+    const held = fromAccounts ? accounts.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0) : Math.max(0, total(g.id, "saved") - total(g.id, "paid_from_saved"));
     return {
       id: g.id,
       name: g.name,
@@ -231,7 +237,9 @@ export async function loadGoals(db: Db, householdId: string, today: string, opts
       linkedAccountId: g.linkedAccountId,
       note: g.note,
       completedAt: g.completedAt,
-      savedMinor: fromAccounts ? accounts.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0) : savedBy.get(g.id) ?? 0,
+      savedMinor: held + paid,
+      heldMinor: held,
+      paidMinor: paid,
       savedFrom: fromAccounts ? "accounts" : "records",
       accounts,
       parts: parts.filter((p) => p.goalId === g.id).map((p) => ({ id: p.id, name: p.name, amountMinor: p.amountMinor, sort: p.sort, doneAt: p.doneAt })),

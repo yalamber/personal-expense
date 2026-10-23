@@ -5,7 +5,8 @@
  * Amounts owed (a credit card, a loan) are typed as positive "what we owe" and kept negative.
  */
 import { Hono } from "hono";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { addDays, isDate, todayIn } from "../../../shared/dates";
 import { addMonths, parseRate, termMonths } from "../../../shared/deposit";
 import { emi, splitPayment } from "../../../shared/loan";
@@ -62,6 +63,10 @@ type AccountBody = {
   installment?: string;
   installmentDay?: number;
   closed?: boolean;
+  /** Contacts. weOwe: the starting balance is what we owe them (otherwise what they owe us). */
+  phone?: string;
+  note?: string;
+  weOwe?: boolean;
 };
 
 /**
@@ -76,6 +81,8 @@ async function accountFields(c: AppContext, body: AccountBody, type: AccountType
     v.name = body.name.trim().slice(0, 80);
   }
   if (typeof body.institution === "string") v.institution = body.institution.trim().slice(0, 80) || null;
+  if (typeof body.phone === "string") v.phone = body.phone.trim().slice(0, 40) || null;
+  if (typeof body.note === "string") v.note = body.note.trim().slice(0, 200) || null;
   if (typeof body.statementSenderPattern === "string") v.statementSenderPattern = body.statementSenderPattern.trim() || null;
   if (typeof body.isShared === "boolean") v.isShared = body.isShared;
   if (body.goalId !== undefined) {
@@ -146,7 +153,7 @@ async function accountFields(c: AppContext, body: AccountBody, type: AccountType
     if (b === null) return { error: type === "loan" ? "how much is still owed?" : "enter the balance" };
     const date = body.balanceDate ?? today;
     if (!isDate(date)) return { error: "balance date must be YYYY-MM-DD" };
-    v.openingBalanceMinor = OWED.includes(type) ? -Math.abs(b) : b;
+    v.openingBalanceMinor = OWED.includes(type) ? -Math.abs(b) : type === "person" ? (body.weOwe ? -Math.abs(b) : Math.abs(b)) : b;
     // Balances count what happens after the end of the starting date. A balance typed for today
     // means "right now", so it stands at the end of yesterday and today's entries still count.
     v.openingBalanceDate = date === today ? addDays(today, -1) : date;
@@ -323,6 +330,111 @@ accountRoutes.post("/accounts/:accountId/close", requireWriter, async (c) => {
   }
   await db.update(schema.accounts).set({ closedAt: nowIso() }).where(eq(schema.accounts.id, account.id));
   return c.json({ ok: true, movedMinor });
+});
+
+// ---------------------------------------------------------------------------
+// Contacts: a khata per shop, relative or friend
+// ---------------------------------------------------------------------------
+
+/**
+ * Every entry on a contact (or any account), oldest first, with the account on the other side of a
+ * transfer and the running balance. Positive = they owe us, negative = we owe them.
+ */
+accountRoutes.get("/accounts/:accountId/entries", async (c) => {
+  const account = await ownAccount(c, c.req.param("accountId"));
+  if (!account) return c.json({ error: "not found" }, 404);
+  const db = c.get("db");
+  const t = schema.transactions;
+  const other = alias(schema.transactions, "other");
+  const otherAccount = alias(schema.accounts, "other_account");
+  const rows = await db
+    .select({
+      id: t.id,
+      date: t.date,
+      amountMinor: t.amountMinor,
+      direction: t.direction,
+      description: t.description,
+      note: t.note,
+      categoryId: t.categoryId,
+      transferPairId: t.transferPairId,
+      otherAccountName: otherAccount.name,
+      byName: schema.members.name,
+    })
+    .from(t)
+    .leftJoin(other, and(eq(other.transferPairId, t.transferPairId), ne(other.id, t.id)))
+    .leftJoin(otherAccount, eq(otherAccount.id, other.accountId))
+    .leftJoin(schema.members, eq(schema.members.id, t.paidByMemberId))
+    .where(and(eq(t.accountId, account.id), isNull(t.voidedAt)))
+    .orderBy(asc(t.date), asc(t.createdAt))
+    .limit(1000);
+  let running = account.openingBalanceMinor ?? 0;
+  const entries = rows.map((r) => {
+    const counted = !account.openingBalanceDate || r.date > account.openingBalanceDate;
+    if (counted) running += r.direction === "in" ? r.amountMinor : -r.amountMinor;
+    return { ...r, counted, balanceMinor: running };
+  });
+  return c.json({ openingMinor: account.openingBalanceMinor ?? 0, openingDate: account.openingBalanceDate, balanceMinor: running, entries });
+});
+
+/**
+ * One entry on a contact's khata:
+ *  - gave: we paid or lent them money from one of our accounts (they owe us more, or we owe less)
+ *  - got: they paid or lent us money into one of our accounts
+ *  - credit: we bought something on credit from them (spending; we owe them more)
+ *  - charge: they owe us for something (rent, something we sold them)
+ */
+accountRoutes.post("/accounts/:accountId/entries", requireWriter, async (c) => {
+  const contact = await ownAccount(c, c.req.param("accountId"));
+  if (!contact || contact.type !== "person") return c.json({ error: "not a contact" }, 404);
+  const household = c.get("household");
+  const body = await readJson<{ kind?: string; amount?: string; date?: string; otherAccountId?: string; categoryId?: string | null; description?: string; note?: string }>(c);
+  const value = amount(c, body.amount);
+  if (!value || value <= 0) return c.json({ error: "enter the amount" }, 400);
+  const date = body.date ?? todayIn(household.timezone);
+  if (!isDate(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+  const db = c.get("db");
+  const memberId = c.get("member").id;
+  const note = body.note?.trim() || null;
+  const what = body.description?.trim().slice(0, 120) || null;
+
+  if (body.kind === "gave" || body.kind === "got") {
+    const other = body.otherAccountId ? await ownAccount(c, body.otherAccountId) : null;
+    if (!other || other.id === contact.id || other.type === "person") return c.json({ error: body.kind === "gave" ? "choose the account it was paid from" : "choose the account it came into" }, 400);
+    const gave = body.kind === "gave";
+    const t = await createTransfer(db, {
+      householdId: household.id,
+      fromAccountId: gave ? other.id : contact.id,
+      toAccountId: gave ? contact.id : other.id,
+      amountMinor: value,
+      date,
+      note,
+      memberId,
+      description: what ?? (gave ? `Paid ${contact.name}` : `From ${contact.name}`),
+    });
+    return c.json({ id: gave ? t.inId : t.outId }, 201);
+  }
+  if (body.kind === "credit" || body.kind === "charge") {
+    if (body.categoryId) {
+      const cat = await db.query.categories.findFirst({ where: and(eq(schema.categories.id, body.categoryId), eq(schema.categories.householdId, household.id)), columns: { id: true } });
+      if (!cat) return c.json({ error: "category not found" }, 404);
+    }
+    const credit = body.kind === "credit";
+    const values = transactionValues({
+      householdId: household.id,
+      accountId: contact.id,
+      date,
+      amountMinor: value,
+      direction: credit ? "out" : "in",
+      categoryId: body.categoryId ?? null,
+      description: what ?? (credit ? `On credit from ${contact.name}` : `${contact.name} owes us`),
+      note,
+      paidByMemberId: memberId,
+      source: "manual",
+    });
+    await db.insert(schema.transactions).values(values);
+    return c.json({ id: values.id }, 201);
+  }
+  return c.json({ error: "choose what happened" }, 400);
 });
 
 // ---------------------------------------------------------------------------

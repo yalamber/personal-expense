@@ -35,7 +35,9 @@ export function Log({
   const cur = household.currency;
   // Spending and income touch everyday accounts and cards; deposits, loans and money lent only move.
   const open = accounts.filter((a) => !a.closedAt);
-  const everyday = open.filter((a) => a.type !== "deposit" && a.type !== "loan" && a.type !== "lent");
+  const everyday = open.filter((a) => a.type !== "deposit" && a.type !== "loan" && a.type !== "lent" && a.type !== "person");
+  // A contact's khata: buying on credit from them, or money they owe us, or a move to settle up.
+  const contacts = open.filter((a) => a.type === "person");
   const [kind, setKind] = useState<Kind>(initialKind);
   const [amount, setAmount] = useState("");
   const [payee, setPayee] = useState("");
@@ -101,7 +103,8 @@ export function Log({
   async function save(force = false) {
     setError(null);
     if (!amount.trim()) return setError("Type the amount first.");
-    if (kind !== "move" && !payee.trim()) return setError(kind === "out" ? "Where was it paid? A shop or person is enough." : "Who paid you? An employer or person is enough.");
+    const onContact = contacts.find((a) => a.id === accountId);
+    if (kind !== "move" && !payee.trim() && !onContact) return setError(kind === "out" ? "Where was it paid? A shop or person is enough." : "Who paid you? An employer or person is enough.");
     setBusy(true);
     try {
       if (kind === "move") {
@@ -112,7 +115,14 @@ export function Log({
         } else if (target.startsWith("account:")) {
           const to = open.find((a) => a.id === target.slice(8));
           const from = open.find((a) => a.id === accountId);
-          if (to?.type === "loan") {
+          if (to?.type === "person" || from?.type === "person") {
+            // Settling up with a contact goes into their khata.
+            const contact = to?.type === "person" ? to : from!;
+            const mine = to?.type === "person" ? from : to;
+            if (!mine || mine.type === "person") return setError("Choose one of your own accounts on the other side.");
+            await api.addEntry(household.id, contact.id, { kind: contact === to ? "gave" : "got", amount, date, otherAccountId: mine.id, note });
+            setPhase({ step: "done", message: contact === to ? `Paid ${contact.name}; their khata is updated.` : `Got money from ${contact.name}; their khata is updated.` });
+          } else if (to?.type === "loan") {
             // A payment on a loan: the interest part is an expense, the rest comes off what is owed.
             const r = await api.repayment(household.id, to.id, { amount, date, otherAccountId: accountId, note });
             setPhase({ step: "done", message: `Paid toward ${to.name}: ${formatMoney(r.principalMinor, cur)} off the loan${r.interestMinor ? `, ${formatMoney(r.interestMinor, cur)} interest` : ""}.` });
@@ -134,7 +144,7 @@ export function Log({
           direction: kind,
           accountId,
           categoryId,
-          description: payee.trim(),
+          description: payee.trim() || (onContact ? `On credit from ${onContact.name}` : ""),
           note,
           isPersonal,
           paidByMemberId: paidBy,
@@ -278,6 +288,11 @@ export function Log({
               {kind === "out" ? "Paid from" : "Into"}
               <select value={accountId} onChange={(e) => { setAccountId(e.target.value); setAccountTouched(true); }}>
                 {everyday.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                {contacts.length > 0 && (
+                  <optgroup label={kind === "out" ? "On credit from (we owe them)" : "Owed to us by"}>
+                    {contacts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </label>
           </div>
@@ -287,7 +302,12 @@ export function Log({
           <label style={{ flex: "1 1 160px" }}>
             From
             <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              {open.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {open.filter((a) => a.type !== "person").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {contacts.length > 0 && (
+                <optgroup label="A contact (they paid or lent us)">
+                  {contacts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </optgroup>
+              )}
             </select>
           </label>
           <label style={{ flex: "1 1 180px" }}>
@@ -299,8 +319,13 @@ export function Log({
                 </optgroup>
               )}
               <optgroup label="Another account">
-                {open.filter((a) => a.id !== accountId && a.type !== "loan").map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}
+                {open.filter((a) => a.id !== accountId && a.type !== "loan" && a.type !== "person").map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}
               </optgroup>
+              {contacts.some((a) => a.id !== accountId) && (
+                <optgroup label="A contact (we paid them)">
+                  {contacts.filter((a) => a.id !== accountId).map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}
+                </optgroup>
+              )}
               {open.some((a) => a.type === "loan") && (
                 <optgroup label="A loan payment">
                   {open.filter((a) => a.id !== accountId && a.type === "loan").map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}

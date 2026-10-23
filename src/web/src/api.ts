@@ -44,7 +44,7 @@ export type Household = {
 
 export type Member = { id: string; name: string; email: string; role: Role; color: string; joinedAt: string | null; invitedAt: string };
 
-export type AccountType = "checking" | "savings" | "cash" | "wallet" | "deposit" | "lent" | "credit" | "loan";
+export type AccountType = "checking" | "savings" | "cash" | "wallet" | "deposit" | "lent" | "credit" | "loan" | "person";
 export type DepositPayout = "maturity" | "quarterly" | "monthly";
 
 export type Account = {
@@ -70,6 +70,8 @@ export type Account = {
   installmentMinor: number | null;
   installmentDay: number | null;
   closedAt: string | null;
+  phone: string | null;
+  note: string | null;
   /** Today, from the starting balance; negative for what is owed. */
   balanceMinor: number;
   deposit: { accruedMinor: number; maturityValueMinor: number; totalInterestMinor: number; daysToMaturity: number; termMonths: number } | null;
@@ -104,7 +106,28 @@ export type AccountBody = Partial<{
   installment: string;
   installmentDay: number;
   closed: boolean;
+  phone: string;
+  note: string;
+  weOwe: boolean;
 }>;
+
+/** One line in a contact's khata. "in" is money we gave them (debit), "out" money we got (credit). */
+export type ContactEntry = {
+  id: string;
+  date: string;
+  amountMinor: number;
+  direction: "in" | "out" | "transfer";
+  description: string | null;
+  note: string | null;
+  categoryId: string | null;
+  transferPairId: string | null;
+  otherAccountName: string | null;
+  byName: string | null;
+  counted: boolean;
+  balanceMinor: number;
+};
+export type ContactLedger = { openingMinor: number; openingDate: string | null; balanceMinor: number; entries: ContactEntry[] };
+export type ContactEntryBody = { kind: "gave" | "got" | "credit" | "charge"; amount: string; date: string; otherAccountId?: string; categoryId?: string | null; description?: string; note?: string };
 
 export type CategoryKind = "need" | "want" | "saving" | "transfer" | "income";
 export type Category = { id: string; parentId: string | null; name: string; kind: CategoryKind; sort: number };
@@ -218,7 +241,11 @@ export type Goal = {
   linkedAccountId: string | null;
   note: string | null;
   completedAt: string | null;
+  /** Held plus paid: how far along it is. */
   savedMinor: number;
+  heldMinor: number;
+  /** Already paid toward it: a baina or advance, a stage paid to the builder. */
+  paidMinor: number;
   savedFrom: "accounts" | "records";
   accounts: { id: string; name: string; type: string; balanceMinor: number }[];
   parts: GoalPart[];
@@ -242,7 +269,7 @@ export type PlanData = {
   spareMinor: number | null;
 };
 
-export type Contribution = { id: string; date: string; amountMinor: number; note: string | null; memberName: string | null; transactionId: string | null };
+export type Contribution = { id: string; date: string; amountMinor: number; note: string | null; memberName: string | null; transactionId: string | null; kind: "saved" | "paid" | "paid_from_saved" };
 
 export type Today = {
   today: string;
@@ -318,6 +345,7 @@ export type NewGoalBody = {
   wantedBy?: string;
   monthly?: string;
   saved?: string;
+  paid?: string;
   note?: string;
   linkedAccountId?: string | null;
   parts?: { name: string; amount: string }[];
@@ -344,6 +372,8 @@ export const api = {
     request<{ ok: true; startDate: string; endDate: string; principalMinor: number }>("POST", `${h(id)}/accounts/${accountId}/renew`, body),
   closeAccount: (id: string, accountId: string, body: { interest?: string; toAccountId?: string | null; date?: string }) =>
     request<{ ok: true; movedMinor: number }>("POST", `${h(id)}/accounts/${accountId}/close`, body),
+  entries: (id: string, accountId: string) => request<ContactLedger>("GET", `${h(id)}/accounts/${accountId}/entries`),
+  addEntry: (id: string, accountId: string, body: ContactEntryBody) => request<{ id: string }>("POST", `${h(id)}/accounts/${accountId}/entries`, body),
   saveCsvMapping: (id: string, accountId: string, mapping: CsvMapping) => request<{ ok: true }>("PUT", `${h(id)}/accounts/${accountId}/csv-mapping`, { mapping }),
   importCsv: (id: string, accountId: string, body: { csv: string; filename: string; mapping: CsvMapping; saveMapping: boolean }) =>
     request<ImportResult>("POST", `${h(id)}/accounts/${accountId}/import-csv`, body),
@@ -417,7 +447,7 @@ export const api = {
   updatePart: (id: string, partId: string, body: Partial<{ name: string; amount: string; done: boolean }>) => request<{ ok: true }>("PATCH", `${h(id)}/goal-parts/${partId}`, body),
   removePart: (id: string, partId: string) => request<{ ok: true }>("DELETE", `${h(id)}/goal-parts/${partId}`),
   contributions: (id: string, goalId: string) => request<Contribution[]>("GET", `${h(id)}/goals/${goalId}/contributions`),
-  addContribution: (id: string, goalId: string, body: { amount: string; date: string; note?: string; fromAccountId?: string | null }) =>
+  addContribution: (id: string, goalId: string, body: { amount: string; date: string; note?: string; fromAccountId?: string | null; kind?: "saved" | "paid"; fromSaved?: boolean }) =>
     request<{ id: string }>("POST", `${h(id)}/goals/${goalId}/contributions`, body),
   removeContribution: (id: string, contributionId: string) => request<{ ok: true }>("DELETE", `${h(id)}/goal-contributions/${contributionId}`),
 };

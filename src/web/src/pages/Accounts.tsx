@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { todayIn } from "../../../shared/dates";
+import { worth } from "../../../shared/worth";
 import { api, ApiError, type Account, type Goal, type Household } from "../api";
 import { onLinkClick } from "../router";
-import { formatMoney, shortDate } from "../ui";
+import { Icon, formatMoney, shortDate } from "../ui";
 import { AccountAmount, AccountForm, GROUPS, MaturityForm, RepaymentForm, accountLine, typeInfo } from "./accountsKit";
 import { CsvImport } from "./CsvImport";
 
@@ -84,9 +85,9 @@ export function Accounts({ household }: { household: Household }) {
   }, [load]);
 
   const live = (rows ?? []).filter((a) => !a.closedAt);
-  const closed = (rows ?? []).filter((a) => a.closedAt);
-  const have = live.filter((a) => a.type !== "credit" && a.type !== "loan").reduce((s, a) => s + a.balanceMinor, 0);
-  const owe = live.filter((a) => a.type === "credit" || a.type === "loan").reduce((s, a) => s - a.balanceMinor, 0);
+  const closed = (rows ?? []).filter((a) => a.closedAt && a.type !== "person");
+  const { haveMinor: have, oweMinor: owe } = worth(live);
+  const contacts = live.filter((a) => a.type === "person");
   const toggle = (id: string, panel: Panel) => setOpen(open?.id === id && open.panel === panel ? null : { id, panel });
 
   async function close(a: Account) {
@@ -138,6 +139,19 @@ export function Accounts({ household }: { household: Household }) {
             <dd>{formatMoney(have - owe, cur)}</dd>
           </div>
         </dl>
+      )}
+
+      {contacts.length > 0 && (
+        <a className="card row between" href={`/h/${household.id}/family/contacts`} onClick={onLinkClick} style={{ flexWrap: "nowrap", textDecoration: "none", color: "inherit" }}>
+          <span>
+            <strong>Contacts</strong>{" "}
+            <span className="small muted">
+            · {contacts.length} · we owe {formatMoney(contacts.reduce((s, a) => s + Math.max(0, -a.balanceMinor), 0), cur)} · owed to us{" "}
+            {formatMoney(contacts.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0), cur)}
+            </span>
+          </span>
+          <Icon.next />
+        </a>
       )}
 
       {adding && (

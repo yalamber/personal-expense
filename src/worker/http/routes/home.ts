@@ -14,6 +14,7 @@ import { simulatePlan, type PlanGoal } from "../../../shared/plan";
 import { schema, type Db } from "../../db";
 import { newId } from "../../lib/ids";
 import { loadMerchantIndex } from "../../ledger/merchants";
+import { worth } from "../../../shared/worth";
 import { bookBalance, loadAccountViews, loadGoals, loanCommitments, monthlyBasis, onEverydayAccounts, spareAfter, toPlanGoals, type AccountView } from "../../ledger/overview";
 import { summarize } from "../../ledger/summary";
 import type { AppContext, HonoEnv } from "../context";
@@ -353,7 +354,15 @@ homeRoutes.get("/today", async (c) => {
       .select({ total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
       .from(schema.goalContributions)
       .innerJoin(schema.goals, eq(schema.goals.id, schema.goalContributions.goalId))
-      .where(and(eq(schema.goals.householdId, household.id), between(schema.goalContributions.date, from, to), sql`${schema.goalContributions.note} is not 'Already saved'`)),
+      .where(
+        and(
+          eq(schema.goals.householdId, household.id),
+          between(schema.goalContributions.date, from, to),
+          sql`${schema.goalContributions.note} is not 'Already saved'`,
+          // Money that moved this month: saved, or paid from an account (not paid before the book, not out of savings).
+          sql`(${schema.goalContributions.kind} = 'saved' or ${schema.goalContributions.transactionId} is not null)`,
+        ),
+      ),
     loadDecideCards(c),
     db
       .select({ accountId: schema.statementEmails.accountId, last: sql<string>`max(${schema.importLines.parsedDate})` })
@@ -393,10 +402,9 @@ homeRoutes.get("/today", async (c) => {
     if (card.kind === "balance") questions.set(card.accountId, (questions.get(card.accountId) ?? 0) + 1);
   }
   const twins = cards.filter((x) => x.kind === "twin").length;
-  const bank = accounts.map((a) => ({ accountId: a.id, name: a.name, type: a.type, balanceMinor: a.balanceMinor, lastLineDate: lastBy.get(a.id) ?? null, questions: questions.get(a.id) ?? 0 }));
+  const bank = accounts.filter((a) => a.type !== "person").map((a) => ({ accountId: a.id, name: a.name, type: a.type, balanceMinor: a.balanceMinor, lastLineDate: lastBy.get(a.id) ?? null, questions: questions.get(a.id) ?? 0 }));
   // What we have: everything held, less everything owed. Deposit interest earned so far is shown apart.
-  const haveMinor = accounts.filter((a) => a.type !== "credit" && a.type !== "loan").reduce((sum, a) => sum + a.balanceMinor, 0);
-  const oweMinor = accounts.filter((a) => a.type === "credit" || a.type === "loan").reduce((sum, a) => sum - a.balanceMinor, 0);
+  const { haveMinor, oweMinor } = worth(accounts);
   const accruedMinor = accounts.reduce((sum, a) => sum + (a.deposit?.accruedMinor ?? 0), 0);
   const seen = bank.map((b) => b.lastLineDate).filter((d): d is string => Boolean(d)).sort();
 
@@ -420,7 +428,7 @@ homeRoutes.get("/today", async (c) => {
     movedMinor,
     loansMinor,
     worth: { haveMinor, oweMinor, netMinor: haveMinor - oweMinor, accruedMinor },
-    needsStart: accounts.length === 0 || accounts.every((a) => a.openingBalanceDate === null),
+    needsStart: accounts.filter((a) => a.type !== "person").every((a) => a.openingBalanceDate === null),
     everydayLeftMinor,
     // Whole currency units: "Rs 3,200 a day", never "Rs 3,245.55 a day".
     perDayMinor: Math.floor(Math.max(0, everydayLeftMinor) / daysLeft / 10 ** minorDigits(household.currency)) * 10 ** minorDigits(household.currency),

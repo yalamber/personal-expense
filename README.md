@@ -46,6 +46,17 @@ has and owes today, so balances, Today and the Plan are right from the first day
   until the book has two months of its own).
 - An account or deposit can be kept for a goal; the goal then counts its balance as saved.
 
+**Contacts (Family › Contacts)** keep a khata per shop, relative or friend: what was owed before
+today, then entries as money goes back and forth (we paid them, we got from them, bought on
+credit, they owe us for something). Each contact shows debit, credit and the running balance:
+"we owe Rs 8,200" or "owes us Rs 15,000". Buying on credit is that month's spending; settling
+the tab later is a move. In Log, a contact appears under "On credit from" and in Move or save.
+
+**Goal payments.** A baina or advance to the land's seller, or a stage paid to the builder, is
+recorded on the goal as "Paid toward it": it counts toward the goal but is not money the family
+holds. It can come from an account, out of money already saved for the goal, or from before the
+book started.
+
 Today shows what we have (held, owed, FD interest so far) and the month's loan installments.
 Entries on deposits, loans and money lent are moves, never the month's income or spending.
 
@@ -194,7 +205,7 @@ src/shared/          Pure helpers used by both sides: money, dates, CSV, column 
 src/worker/          Worker: API, email handler, parse step, cron
   db/schema.ts       The whole data model
   auth/              Magic links, sessions, generated signing secret
-  http/routes/       households, accounts (balances, deposits, loans, repayments, maturity),
+  http/routes/       households, accounts (balances, deposits, loans, repayments, maturity, contact khata),
                      ledger (transactions, budgets, export), imports (CSV, review),
                      goals (goals, parts, money in, plan), home (today, decide, log hints)
   ledger/            Categories, merchant memory, transactions and transfers

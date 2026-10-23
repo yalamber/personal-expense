@@ -36,6 +36,13 @@
       "when": 1792726705975,
       "tag": "0004_money_we_have",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792728867878,
+      "tag": "0005_contacts_and_payments",
+      "breakpoints": true
     }
   ]
 }

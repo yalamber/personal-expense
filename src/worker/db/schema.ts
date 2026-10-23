@@ -91,7 +91,11 @@ export const magicLinks = sqliteTable("magic_links", {
  * Money we have (checking, savings, cash, mobile wallet, fixed deposit, money lent to someone)
  * and money we owe (credit card, loan). Balances of what we owe are negative.
  */
-export const accountTypes = ["checking", "savings", "cash", "wallet", "deposit", "lent", "credit", "loan"] as const;
+/**
+ * "person" is a contact's khata: a shop, relative or friend the family runs a tab with. Its
+ * balance is positive when they owe us and negative when we owe them.
+ */
+export const accountTypes = ["checking", "savings", "cash", "wallet", "deposit", "lent", "credit", "loan", "person"] as const;
 export const depositPayouts = ["maturity", "quarterly", "monthly"] as const;
 
 export const accounts = sqliteTable(
@@ -138,6 +142,9 @@ export const accounts = sqliteTable(
     /** Loans: the monthly installment (EMI) and the day of the month it is due. */
     installmentMinor: integer("installment_minor"),
     installmentDay: integer("installment_day"),
+    /** Contacts: a phone number and a few words about them. */
+    phone: text("phone"),
+    note: text("note"),
     /** A closed account (a matured FD, a closed card) keeps its history but leaves the totals. */
     closedAt: text("closed_at"),
     createdAt: text("created_at").notNull().default(now),
@@ -315,6 +322,8 @@ export const goalParts = sqliteTable(
   (t) => [index("goal_parts_goal").on(t.goalId)],
 );
 
+export const contributionKinds = ["saved", "paid", "paid_from_saved"] as const;
+
 export const goalContributions = sqliteTable(
   "goal_contributions",
   {
@@ -326,6 +335,12 @@ export const goalContributions = sqliteTable(
     transactionId: text("transaction_id").references(() => transactions.id),
     note: text("note"),
     memberId: text("member_id").references(() => members.id),
+    /**
+     * saved: money set aside for the goal. paid: money already paid toward it (a baina or advance
+     * to the seller, a builder's stage), from an account or from before the book started.
+     * paid_from_saved: paid out of money that was recorded as saved, so it moves from one to the other.
+     */
+    kind: text("kind", { enum: contributionKinds }).notNull().default("saved"),
   },
   (t) => [index("goal_contributions_goal").on(t.goalId)],
 );
