@@ -9,7 +9,7 @@
  *  - every household-owned table carries household_id so access control is one rule
  */
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
@@ -320,6 +320,23 @@ export const goalParts = sqliteTable(
     doneAt: text("done_at"),
   },
   (t) => [index("goal_parts_goal").on(t.goalId)],
+);
+
+/**
+ * Writes replayed from a phone's outbox carry an Idempotency-Key; the first response is kept
+ * here so a retry (the reply was lost, the app reopened mid-sync) returns it instead of posting
+ * twice. Rows are dropped after a month by the nightly housekeeping.
+ */
+export const idempotencyKeys = sqliteTable(
+  "idempotency_keys",
+  {
+    householdId: text("household_id").notNull().references(() => households.id),
+    key: text("key").notNull(),
+    status: integer("status").notNull(),
+    body: text("body").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.householdId, t.key] }), index("idempotency_keys_created").on(t.createdAt)],
 );
 
 export const contributionKinds = ["saved", "paid", "paid_from_saved"] as const;

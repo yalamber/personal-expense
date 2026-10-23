@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDays, todayIn } from "../../../shared/dates";
-import { api, ApiError, type Account, type Category, type Goal, type Household, type LogHints, type Member, type Twin } from "../api";
+import { api, ApiError, isQueued, QUEUED_NOTE, type Account, type Category, type Goal, type Household, type LogHints, type Member, type Twin } from "../api";
 import { onLinkClick } from "../router";
 import { CategorySelect, Checks, Icon, Sheet, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
 
@@ -110,8 +110,8 @@ export function Log({
       if (kind === "move") {
         if (target.startsWith("goal:")) {
           const goal = goals.find((g) => `goal:${g.id}` === target);
-          await api.addContribution(household.id, target.slice(5), { amount, date, note, fromAccountId: accountId || null });
-          setPhase({ step: "done", message: `Moved to ${goal?.name ?? "the goal"}. It counts as saved, not spent.` });
+          const r = await api.addContribution(household.id, target.slice(5), { amount, date, note, fromAccountId: accountId || null });
+          setPhase({ step: "done", message: isQueued(r) ? QUEUED_NOTE : `Moved to ${goal?.name ?? "the goal"}. It counts as saved, not spent.` });
         } else if (target.startsWith("account:")) {
           const to = open.find((a) => a.id === target.slice(8));
           const from = open.find((a) => a.id === accountId);
@@ -120,18 +120,18 @@ export function Log({
             const contact = to?.type === "person" ? to : from!;
             const mine = to?.type === "person" ? from : to;
             if (!mine || mine.type === "person") return setError("Choose one of your own accounts on the other side.");
-            await api.addEntry(household.id, contact.id, { kind: contact === to ? "gave" : "got", amount, date, otherAccountId: mine.id, note });
-            setPhase({ step: "done", message: contact === to ? `Paid ${contact.name}; their khata is updated.` : `Got money from ${contact.name}; their khata is updated.` });
+            const r = await api.addEntry(household.id, contact.id, { kind: contact === to ? "gave" : "got", amount, date, otherAccountId: mine.id, note });
+            setPhase({ step: "done", message: isQueued(r) ? QUEUED_NOTE : contact === to ? `Paid ${contact.name}; their khata is updated.` : `Got money from ${contact.name}; their khata is updated.` });
           } else if (to?.type === "loan") {
             // A payment on a loan: the interest part is an expense, the rest comes off what is owed.
             const r = await api.repayment(household.id, to.id, { amount, date, otherAccountId: accountId, note });
-            setPhase({ step: "done", message: `Paid toward ${to.name}: ${formatMoney(r.principalMinor, cur)} off the loan${r.interestMinor ? `, ${formatMoney(r.interestMinor, cur)} interest` : ""}.` });
+            setPhase({ step: "done", message: isQueued(r) ? QUEUED_NOTE : `Paid toward ${to.name}: ${formatMoney(r.principalMinor, cur)} off the loan${r.interestMinor ? `, ${formatMoney(r.interestMinor, cur)} interest` : ""}.` });
           } else if (from?.type === "lent" && to) {
             const r = await api.repayment(household.id, from.id, { amount, date, otherAccountId: to.id, note });
-            setPhase({ step: "done", message: `${formatMoney(r.principalMinor, cur)} came back from ${from.name}.` });
+            setPhase({ step: "done", message: isQueued(r) ? QUEUED_NOTE : `${formatMoney(r.principalMinor, cur)} came back from ${from.name}.` });
           } else {
-            await api.addTransfer(household.id, { fromAccountId: accountId, toAccountId: target.slice(8), amount, date, note });
-            setPhase({ step: "done", message: "Moved between your accounts. Moves are not spending." });
+            const r = await api.addTransfer(household.id, { fromAccountId: accountId, toAccountId: target.slice(8), amount, date, note });
+            setPhase({ step: "done", message: isQueued(r) ? QUEUED_NOTE : "Moved between your accounts. Moves are not spending." });
           }
         } else {
           setError("Choose where the money goes.");
@@ -151,7 +151,7 @@ export function Log({
           force,
         });
         const filed = !categoryId && res.categoryId ? ` Filed under ${categoryLabel(categories, res.categoryId)}, from last time.` : "";
-        setPhase({ step: "done", message: `Logged.${filed} The first check is yours; the second comes when the bank confirms it.` });
+        setPhase({ step: "done", message: isQueued(res) ? QUEUED_NOTE : `Logged.${filed} The first check is yours; the second comes when the bank confirms it.` });
       }
       onSaved();
     } catch (err) {

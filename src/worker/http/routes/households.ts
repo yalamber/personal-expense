@@ -7,7 +7,7 @@ import { ensureCategories } from "../../ledger/categories";
 import { inboundAddressFor } from "../../lib/inbound";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
-import { readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
+import { idempotent, readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
 import { accountRoutes } from "./accounts";
 import { goalRoutes } from "./goals";
 import { homeRoutes } from "./home";
@@ -64,6 +64,7 @@ householdRoutes.post("/households", async (c) => {
 
 const scoped = new Hono<HonoEnv>();
 scoped.use("*", requireHousehold);
+scoped.use("*", idempotent);
 
 scoped.get("/", async (c) => {
   const h = c.get("household");

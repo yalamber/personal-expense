@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Me } from "./api";
+import { clearOutbox, getOfflineState } from "./offline";
 import { Login } from "./pages/Login";
 import { NewHousehold } from "./pages/NewHousehold";
 import { Shell } from "./pages/Shell";
@@ -57,7 +58,18 @@ export function App() {
       householdId={householdId}
       sub={sub}
       onLogout={async () => {
-        await api.logout();
+        const waiting = getOfflineState().items.length;
+        if (waiting && !window.confirm(`${waiting} ${waiting === 1 ? "entry" : "entries"} on this phone ${waiting === 1 ? "has" : "have"} not reached the book yet. Sign out anyway and lose ${waiting === 1 ? "it" : "them"}?`)) return;
+        try {
+          await api.logout();
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 0) {
+            window.alert("You're offline. Sign out once you're back online.");
+            return;
+          }
+        }
+        clearOutbox();
+        navigator.serviceWorker?.controller?.postMessage({ type: "clear-api" });
         setSession({ state: "anonymous" });
         navigate("/");
       }}

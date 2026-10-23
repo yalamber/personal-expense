@@ -1,5 +1,9 @@
 import type { CsvMapping } from "../../shared/csv-mapping";
 import type { PlanGoalKind } from "../../shared/plan";
+import { enqueue, markStale } from "./offline";
+import { queueable } from "./offline/core";
+
+export { isQueued, QUEUED_NOTE, type Queued } from "./offline";
 
 export class ApiError extends Error {
   constructor(
@@ -11,15 +15,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * One call to the API. With no connection, money logged, moved or paid waits in the phone's
+ * outbox and the caller gets a Queued answer; reads come back from the service worker's store,
+ * marked with when they were saved.
+ */
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: "same-origin",
-  });
-  const data = (await res.json().catch(() => ({}))) as { error?: string } & T;
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `request failed (${res.status})`, data);
+  const write = method !== "GET";
+  if (write && typeof navigator !== "undefined" && !navigator.onLine && queueable(method, path)) return enqueue(method, path, body) as unknown as T;
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+    });
+  } catch {
+    if (write && queueable(method, path)) return enqueue(method, path, body) as unknown as T;
+    throw new ApiError(0, "No connection. Try again when you're back online.");
+  }
+  if (!write) {
+    const fromCache = res.headers.get("x-from-cache");
+    markStale(fromCache === null ? null : fromCache || "unknown");
+  }
+  const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string } & T;
+  if (!res.ok) {
+    if (res.status === 503 && res.headers.get("x-offline")) throw new ApiError(503, data.message ?? "You're offline.", data);
+    throw new ApiError(res.status, data.error ?? `request failed (${res.status})`, data);
+  }
   return data;
 }
 

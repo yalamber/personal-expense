@@ -66,6 +66,22 @@ Entries on deposits, loans and money lent are moves, never the month's income or
 Next: bank-specific email parsers (needs three sample emails per bank), recurring bills, history
 backfill.
 
+## Offline
+
+The app is a PWA that works without a connection:
+
+- **The shell**: a service worker (`src/web/sw.js`, stamped per build by `vite.config.ts`)
+  caches the built app, so it opens with no signal and can be installed to the home screen.
+- **Reading**: API reads are kept after each fetch and served when the network is down or slow,
+  marked with when they were saved. The bar under the header says "Offline. Showing what was
+  saved at 14:02."
+- **Writing**: money logged, moved, paid toward a goal or a loan, and khata entries go into an
+  outbox on the phone (`src/web/src/offline`), show at the top of the book as "On this phone",
+  and replay in order when the connection returns. Every replay carries an `Idempotency-Key`,
+  so a retry whose first answer was lost never posts twice (`idempotent` in
+  `src/worker/http/context.ts`, keys kept a month). The twin check still runs on delivery: a
+  possible double entry waits on Today with "Keep both" or "Drop it".
+
 ## Stack
 
 Cloudflare Workers, Email Routing, D1, R2, Cron Triggers (Queues optional). Hono for the API, Drizzle for
@@ -134,7 +150,11 @@ any other branch only build preview versions.
 
 ### Email Routing for statements (one time)
 
-Statements go to `stmt+<household token>@leadbase.stream`. Either of these sends them to the Worker:
+Statements go to `stmt+<household token>@statements.leadbase.stream` (`INBOUND_DOMAIN` in
+wrangler.jsonc; the Worker accepts the token on any domain of the zone). For a subdomain address,
+turn on **Subaddressing** under Email Routing › Settings, then add the custom address
+`stmt@statements.leadbase.stream` › Send to a Worker › `personal-expense`; Cloudflare adds the MX
+records for the subdomain. For an address on the apex domain, either of these works:
 
 - **Catch-all** (what is set up now): Email Service › Email Routing › `leadbase.stream` › Routing
   Rules › Catch-all › Send to a Worker › `personal-expense`. The Worker keeps mail for a known
@@ -143,11 +163,7 @@ Statements go to `stmt+<household token>@leadbase.stream`. Either of these sends
   address `stmt@leadbase.stream` › Send to a Worker › `personal-expense`. With subaddressing,
   `stmt+<token>@leadbase.stream` matches it.
 
-A zone has one catch-all and it only covers the apex domain; subdomains need literal rules. The
-Worker reads the token whatever the domain, so a subdomain address works once mail reaches it. For
-`statements.leadbase.stream`: turn on Subaddressing, then add the custom address
-`stmt@statements.leadbase.stream` › Send to a Worker › `personal-expense` (Cloudflare adds the MX
-records for the subdomain). `stmt+<token>@statements.leadbase.stream` then reaches the household.
+A zone has one catch-all and it only covers the apex domain; subdomains need the literal rule.
 
 ### Forwarding from Gmail
 

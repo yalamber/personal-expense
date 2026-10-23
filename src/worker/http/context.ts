@@ -66,6 +66,26 @@ export const requireHousehold: MiddlewareHandler<HonoEnv> = async (c, next) => {
   await next();
 };
 
+/**
+ * A write with an Idempotency-Key header runs once per household: the first response is stored
+ * and handed back to any retry of the same key. Phones replaying their offline outbox use it, so
+ * a lost reply never means a payment logged twice.
+ */
+export const idempotent: MiddlewareHandler<HonoEnv> = async (c, next) => {
+  const key = c.req.header("idempotency-key");
+  if (!key || !["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) return next();
+  if (key.length > 80 || !/^[\w.-]+$/.test(key)) return c.json({ error: "bad idempotency key" }, 400);
+  const db = c.get("db");
+  const householdId = c.get("household").id;
+  const seen = await db.query.idempotencyKeys.findFirst({ where: and(eq(schema.idempotencyKeys.householdId, householdId), eq(schema.idempotencyKeys.key, key)) });
+  if (seen) return new Response(seen.body, { status: seen.status, headers: { "content-type": "application/json", "x-idempotent-replay": "1" } });
+  await next();
+  // Only a settled answer is worth keeping; a server error should be retried for real.
+  if (c.res.status >= 500) return;
+  const body = await c.res.clone().text();
+  await db.insert(schema.idempotencyKeys).values({ householdId, key, status: c.res.status, body, createdAt: new Date().toISOString() }).onConflictDoNothing();
+};
+
 export function requireRole(...roles: MemberRole[]): MiddlewareHandler<HonoEnv> {
   return async (c, next) => {
     if (!roles.includes(c.get("member").role)) return c.json({ error: "forbidden" }, 403);

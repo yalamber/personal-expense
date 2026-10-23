@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { todayIn } from "../../../shared/dates";
 import { monthName } from "../../../shared/plan";
-import { api, ApiError, type Account, type Category, type ContactEntry, type ContactEntryBody, type ContactLedger, type Household } from "../api";
+import { api, ApiError, isQueued, QUEUED_NOTE, type Account, type Category, type ContactEntry, type ContactEntryBody, type ContactLedger, type Household } from "../api";
 import { navigate, onLinkClick } from "../router";
 import { CategorySelect, Icon, Sheet, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
+import { Pending } from "./Pending";
 
 /**
  * Khata: the family's tabs with shops, relatives and friends. Each contact has a page like the
@@ -345,6 +346,7 @@ export function KhataPage({ household, contactId, categories, onChanged }: { hou
           <h2>The book</h2>
           <span className="mono small muted">oldest first · balance after each line</span>
         </div>
+        <Pending household={household} accounts={[...accounts, contact]} goals={[]} filter={(i) => i.path.includes(`/accounts/${contactId}/entries`)} />
         {hidden > 0 && (
           <div style={{ padding: "8px 0" }}>
             <button type="button" className="link small" onClick={() => setShowAll(true)}>
@@ -486,7 +488,8 @@ function EntrySheet({
     if (needsAccount && !other) return setError(kind === "gave" ? "Which account was it paid from?" : "Which account did it come into?");
     setBusy(true);
     try {
-      await api.addEntry(household.id, contact.id, { kind, amount, date, otherAccountId: needsAccount ? other : undefined, categoryId: kind === "credit" || kind === "charge" ? categoryId : null, description: what, note });
+      const r = await api.addEntry(household.id, contact.id, { kind, amount, date, otherAccountId: needsAccount ? other : undefined, categoryId: kind === "credit" || kind === "charge" ? categoryId : null, description: what, note });
+      if (isQueued(r)) return onSaved(QUEUED_NOTE);
       const money = formatMoney(Math.abs(Number(amount.replace(/[^\d.-]/g, "")) || 0), cur).replace(/\.00$/, "");
       onSaved(
         kind === "gave" ? `Paid ${contact.name} ${money} from ${otherName}.` : kind === "got" ? `Got ${money} from ${contact.name} into ${otherName}.` : kind === "credit" ? `${money} added to the tab with ${contact.name}.` : `${contact.name} owes us ${money} more.`,

@@ -920,6 +920,43 @@ main.app {
   }
 }
 
+/* ---- Offline ----------------------------------------------------------- */
+
+.netbar {
+  position: sticky;
+  top: 64px;
+  z-index: 9;
+  background: var(--marigold-soft);
+  color: var(--marigold-deep);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.netbar a,
+.netbar button.link {
+  color: inherit;
+  font-weight: 600;
+  min-height: 0;
+  padding: 0;
+  text-decoration: underline;
+}
+.pending-row .what strong {
+  color: var(--ink-soft);
+}
+@media (max-width: 760px) {
+  .netbar {
+    top: 56px;
+    padding: 8px 16px;
+  }
+}
+
 /* ---- Khata ------------------------------------------------------------- */
 
 .khata-row {

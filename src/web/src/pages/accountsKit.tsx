@@ -7,7 +7,7 @@ import { addDays, todayIn } from "../../../shared/dates";
 import { rateLabel } from "../../../shared/deposit";
 import { minorDigits } from "../../../shared/money";
 import { monthName } from "../../../shared/plan";
-import { api, ApiError, type Account, type AccountBody, type AccountType, type DepositPayout, type Goal, type Household } from "../api";
+import { api, ApiError, isQueued, QUEUED_NOTE, type Account, type AccountBody, type AccountType, type DepositPayout, type Goal, type Household } from "../api";
 import { amountInput, formatMoney, shortDate } from "../ui";
 
 export const TYPES: { type: AccountType; label: string; group: Group; hint: string }[] = [
@@ -350,7 +350,7 @@ export function RepaymentForm({ household, account, accounts, onDone }: { househ
     setError(null);
     try {
       const r = await api.repayment(household.id, account.id, { amount, date, otherAccountId: other });
-      setMsg(isLoan ? `Logged: ${formatMoney(r.principalMinor, cur)} off the loan${r.interestMinor ? `, ${formatMoney(r.interestMinor, cur)} interest` : ""}.` : `Logged: ${formatMoney(r.principalMinor, cur)} back.`);
+      setMsg(isQueued(r) ? QUEUED_NOTE : isLoan ? `Logged: ${formatMoney(r.principalMinor, cur)} off the loan${r.interestMinor ? `, ${formatMoney(r.interestMinor, cur)} interest` : ""}.` : `Logged: ${formatMoney(r.principalMinor, cur)} back.`);
       onDone();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not log it");

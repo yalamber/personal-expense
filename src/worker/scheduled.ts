@@ -18,6 +18,13 @@ const STUCK_AFTER_MINUTES = 10;
 export async function handleScheduled(env: AppEnv): Promise<void> {
   await retryStuckStatements(env);
   await enforceRawMailRetention(env);
+  await forgetOldIdempotencyKeys(env);
+}
+
+/** Replay answers for offline writes are only needed for days; a month is plenty. */
+async function forgetOldIdempotencyKeys(env: AppEnv): Promise<void> {
+  const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  await getDb(env.DB).delete(schema.idempotencyKeys).where(lt(schema.idempotencyKeys.createdAt, cutoff));
 }
 
 async function retryStuckStatements(env: AppEnv): Promise<void> {

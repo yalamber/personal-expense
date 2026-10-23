@@ -11,6 +11,7 @@ import { GoalDetail } from "./GoalDetail";
 import { Inbox } from "./Inbox";
 import { Log } from "./Log";
 import { Members } from "./Members";
+import { NetBar } from "./NetBar";
 import { NewGoal } from "./NewGoal";
 import { Plan } from "./Plan";
 import { StartingPoint } from "./StartingPoint";
@@ -79,6 +80,12 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
     void loadBasics();
   }, [loadBasics]);
 
+  // Entries that went out from the phone's outbox, or a retry after being offline: read again.
+  useEffect(() => {
+    window.addEventListener("fm:synced", changed);
+    return () => window.removeEventListener("fm:synced", changed);
+  }, [changed]);
+
   const space = spaceOf(sub);
   const base = `/h/${householdId}`;
   const goalMatch = sub.match(/^\/plan\/goals\/([^/]+)$/);
@@ -124,6 +131,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
           </button>
         </div>
       </header>
+      <NetBar householdId={householdId} />
 
       <main className="app">
         {error && <div className="error">{error}</div>}

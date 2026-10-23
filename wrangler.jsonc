@@ -26,7 +26,7 @@
     // Email Routing on leadbase.stream sends this mail to the Worker (catch-all, or a stmt@ rule
     // with subaddressing on). The Worker reads the token whatever the domain, so a subdomain
     // address keeps working if one is added later.
-    "INBOUND_DOMAIN": "leadbase.stream",
+    "INBOUND_DOMAIN": "statements.leadbase.stream",
     "INBOUND_LOCAL_PART": "stmt",
     // How sign-in emails go out: "cloudflare" uses the send_email binding below, "resend" uses
     // Resend (RESEND_API_KEY secret), "log" only writes them to the Worker log (local development).

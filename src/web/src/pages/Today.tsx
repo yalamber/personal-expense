@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { lateLabel, monthName } from "../../../shared/plan";
 import { api, ApiError, type Account, type AccountType, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
 import { onLinkClick } from "../router";
+import { Pending } from "./Pending";
 import { CategorySelect, Checks, Icon, MonthSwitcher, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
 
 /** Accounts that get bank statements; deposits, loans and money lent are kept by the family. */
@@ -142,6 +143,7 @@ export function Today({
               <h2 id="book-h">The book</h2>
               <span className="mono small muted">✓ logged by family · ✓✓ confirmed by the bank</span>
             </div>
+            <Pending household={household} accounts={accounts} goals={goals} />
             {txs && txs.length === 0 && (
               <div className="stack" style={{ padding: "18px 0" }}>
                 <span className="muted">Nothing in the book for this month yet.</span>
