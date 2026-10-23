@@ -29,6 +29,13 @@
       "when": 1792697034332,
       "tag": "0003_fable",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792726705975,
+      "tag": "0004_money_we_have",
+      "breakpoints": true
     }
   ]
 }

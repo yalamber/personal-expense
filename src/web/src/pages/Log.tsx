@@ -33,14 +33,17 @@ export function Log({
 }) {
   const today = todayIn(household.timezone);
   const cur = household.currency;
+  // Spending and income touch everyday accounts and cards; deposits, loans and money lent only move.
+  const open = accounts.filter((a) => !a.closedAt);
+  const everyday = open.filter((a) => a.type !== "deposit" && a.type !== "loan" && a.type !== "lent");
   const [kind, setKind] = useState<Kind>(initialKind);
   const [amount, setAmount] = useState("");
   const [payee, setPayee] = useState("");
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [categoryTouched, setCategoryTouched] = useState(false);
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [accountId, setAccountId] = useState(everyday[0]?.id ?? open[0]?.id ?? "");
   const [accountTouched, setAccountTouched] = useState(false);
-  const [target, setTarget] = useState(goals[0] ? `goal:${goals[0].id}` : accounts[1] ? `account:${accounts[1].id}` : "");
+  const [target, setTarget] = useState(goals[0] ? `goal:${goals[0].id}` : open[1] ? `account:${open[1].id}` : "");
   const [date, setDate] = useState(today);
   const [paidBy, setPaidBy] = useState(household.me.id);
   const [note, setNote] = useState("");
@@ -107,8 +110,19 @@ export function Log({
           await api.addContribution(household.id, target.slice(5), { amount, date, note, fromAccountId: accountId || null });
           setPhase({ step: "done", message: `Moved to ${goal?.name ?? "the goal"}. It counts as saved, not spent.` });
         } else if (target.startsWith("account:")) {
-          await api.addTransfer(household.id, { fromAccountId: accountId, toAccountId: target.slice(8), amount, date, note });
-          setPhase({ step: "done", message: "Moved between your accounts. Moves are not spending." });
+          const to = open.find((a) => a.id === target.slice(8));
+          const from = open.find((a) => a.id === accountId);
+          if (to?.type === "loan") {
+            // A payment on a loan: the interest part is an expense, the rest comes off what is owed.
+            const r = await api.repayment(household.id, to.id, { amount, date, otherAccountId: accountId, note });
+            setPhase({ step: "done", message: `Paid toward ${to.name}: ${formatMoney(r.principalMinor, cur)} off the loan${r.interestMinor ? `, ${formatMoney(r.interestMinor, cur)} interest` : ""}.` });
+          } else if (from?.type === "lent" && to) {
+            const r = await api.repayment(household.id, from.id, { amount, date, otherAccountId: to.id, note });
+            setPhase({ step: "done", message: `${formatMoney(r.principalMinor, cur)} came back from ${from.name}.` });
+          } else {
+            await api.addTransfer(household.id, { fromAccountId: accountId, toAccountId: target.slice(8), amount, date, note });
+            setPhase({ step: "done", message: "Moved between your accounts. Moves are not spending." });
+          }
         } else {
           setError("Choose where the money goes.");
           return;
@@ -163,7 +177,7 @@ export function Log({
     }
   }
 
-  if (!accounts.length) {
+  if (!open.length) {
     return (
       <Sheet title="Log it" onClose={onClose}>
         <p>
@@ -263,7 +277,7 @@ export function Log({
             <label style={{ flex: "1 1 150px" }}>
               {kind === "out" ? "Paid from" : "Into"}
               <select value={accountId} onChange={(e) => { setAccountId(e.target.value); setAccountTouched(true); }}>
-                {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                {everyday.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </label>
           </div>
@@ -273,7 +287,7 @@ export function Log({
           <label style={{ flex: "1 1 160px" }}>
             From
             <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {open.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </label>
           <label style={{ flex: "1 1 180px" }}>
@@ -285,8 +299,13 @@ export function Log({
                 </optgroup>
               )}
               <optgroup label="Another account">
-                {accounts.filter((a) => a.id !== accountId).map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}
+                {open.filter((a) => a.id !== accountId && a.type !== "loan").map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}
               </optgroup>
+              {open.some((a) => a.type === "loan") && (
+                <optgroup label="A loan payment">
+                  {open.filter((a) => a.id !== accountId && a.type === "loan").map((a) => <option key={a.id} value={`account:${a.id}`}>{a.name}</option>)}
+                </optgroup>
+              )}
             </select>
           </label>
         </div>

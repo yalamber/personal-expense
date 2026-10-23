@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { lateLabel, monthName, simulatePlan, spanLabel, type GoalOutcome, type PlanGoal } from "../../../shared/plan";
 import { minorDigits, parseAmountToMinor } from "../../../shared/money";
-import { api, ApiError, type Goal, type Household, type PlanData } from "../api";
+import { rateLabel } from "../../../shared/deposit";
+import { api, ApiError, type Account, type Goal, type Household, type PlanData } from "../api";
 import { onLinkClick } from "../router";
-import { Icon, amountInput, formatMoney } from "../ui";
+import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 
 export function toPlanGoals(goals: Goal[]): PlanGoal[] {
   return goals
@@ -34,6 +35,8 @@ const KIND_ICON = { safety: Icon.safety, purchase: Icon.purchase, build: Icon.bu
 /** Plan: the goals as one road, in the order they are funded, with one lever — money per month. */
 export function Plan({ household, version, onChanged }: { household: Household; version: number; onChanged: () => void }) {
   const [data, setData] = useState<PlanData | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [withReleases, setWithReleases] = useState(true);
   const [pool, setPool] = useState<number | null>(null);
   const [custom, setCustom] = useState("");
   const [rise, setRise] = useState(0);
@@ -44,8 +47,9 @@ export function Plan({ household, version, onChanged }: { household: Household; 
 
   const load = useCallback(async () => {
     try {
-      const d = await api.plan(household.id);
+      const [d, a] = await Promise.all([api.plan(household.id), api.accounts(household.id)]);
       setData(d);
+      setAccounts(a.filter((x) => !x.closedAt));
       setPool(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the plan");
@@ -59,7 +63,11 @@ export function Plan({ household, version, onChanged }: { household: Household; 
   const goals = useMemo(() => (data ? toPlanGoals(data.goals) : []), [data]);
   const current = data?.plannedMinor ?? 0;
   const amount = pool ?? current;
-  const sim = useMemo(() => (data && goals.length ? simulatePlan(goals, { startMonth: data.startMonth, poolMinor: amount, priceRisePerYear: rise }) : null), [data, goals, amount, rise]);
+  const releases = useMemo(() => (withReleases ? (data?.loans.releases ?? []) : []), [data, withReleases]);
+  const sim = useMemo(
+    () => (data && goals.length ? simulatePlan(goals, { startMonth: data.startMonth, poolMinor: amount, priceRisePerYear: rise, releases }) : null),
+    [data, goals, amount, rise, releases],
+  );
 
   if (error && !data) return <div className="error">{error}</div>;
   if (!data) return <p className="muted">Drawing the road…</p>;
@@ -123,7 +131,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
 
   const outcomes = sim?.outcomes ?? [];
   const total = outcomes.reduce((s, o) => s + o.finalTargetMinor, 0);
-  type Mile = { key: string; order: string; when: string; late: boolean; done: boolean; goalId: string; title: string; chip: string | null; chipTone: string; note: string; Icon: (p: { size?: number }) => React.ReactElement };
+  type Mile = { key: string; order: string; when: string; late: boolean; done: boolean; href: string; title: string; chip: string | null; chipTone: string; note: string; Icon: (p: { size?: number }) => React.ReactElement };
   const miles: Mile[] = [];
   for (const o of outcomes) {
     const g = data.goals.find((x) => x.id === o.id)!;
@@ -136,7 +144,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
         when: ready === null ? "later" : ready === "now" ? "now" : monthName(ready),
         late: false,
         done: ready === "now",
-        goalId: g.id,
+        href: `/h/${household.id}/plan/goals/${g.id}`,
         title: `${g.name}: building can start`,
         chip: null,
         chipTone: "grey",
@@ -151,12 +159,29 @@ export function Plan({ household, version, onChanged }: { household: Household; 
       when: o.doneMonth === null ? "not yet" : o.doneMonth === "now" ? "now" : monthName(o.doneMonth),
       late: late || o.doneMonth === null,
       done: o.doneMonth === "now",
-      goalId: g.id,
+      href: `/h/${household.id}/plan/goals/${g.id}`,
       title: g.kind === "build" ? `${g.name}: moving in` : g.name,
       chip: o.doneMonth === null ? "out of reach" : o.lateMonths === null ? (g.wantedBy ? null : "no date set") : lateLabel(o.lateMonths),
       chipTone: o.doneMonth === null || late ? "amber" : o.lateMonths === null ? "grey" : "green",
       note: `${formatMoney(g.savedMinor, cur)} of ${formatMoney(o.finalTargetMinor, cur)}${o.finalTargetMinor !== g.targetMinor ? " at the risen price" : ""} · ${g.monthlyPlanMinor ? `${formatMoney(g.monthlyPlanMinor, cur)} a month of its own` : "gets money when it is its turn"}${g.wantedBy ? ` · wanted by ${monthName(g.wantedBy)}` : ""}`,
       Icon: g.kind === "build" ? Icon.house : KindIcon,
+    });
+  }
+
+  // A loan paid off is a milestone too: its installment joins the plan from the next month.
+  for (const r of data.loans.releases) {
+    miles.push({
+      key: `loan-${r.accountId}`,
+      order: r.fromMonth,
+      when: monthName(r.fromMonth),
+      late: false,
+      done: false,
+      href: `/h/${household.id}/family/accounts`,
+      title: `${r.name} paid off`,
+      chip: withReleases ? `+${formatMoney(Math.round(r.amountMinor / 10 ** minorDigits(cur)) * 10 ** minorDigits(cur), cur)} a month` : null,
+      chipTone: "green",
+      note: withReleases ? "The installment goes to the first unfinished goal from here on." : "Counted as spending money once paid off. Turn it on below to put it into the goals.",
+      Icon: Icon.unlock,
     });
   }
 
@@ -205,7 +230,11 @@ export function Plan({ household, version, onChanged }: { household: Household; 
           </button>
         ) : (
           <span className="small muted">
-            {spare !== null && spare > 0 ? `About ${formatMoney(spare, cur)} a month is spare after spending and goals.` : data.basis.months ? "No spare money in a typical month yet." : "A few months in the book will show what is spare."}
+            {spare !== null && spare > 0
+              ? `About ${formatMoney(spare, cur)} a month is spare after spending, goals${data.loans.monthlyMinor ? " and loan installments" : ""}${data.basis.source === "typical" ? ", going by your usual month" : ""}.`
+              : data.basis.source !== "none"
+                ? "No spare money in a typical month yet."
+                : "Two months in the book, or a usual month on the starting point, will show what is spare."}
           </span>
         )}
       </section>
@@ -223,7 +252,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
             <div className="body">
               <div className="row" style={{ gap: 10 }}>
                 <h3>
-                  <a href={`/h/${household.id}/plan/goals/${m.goalId}`} onClick={onLinkClick}>
+                  <a href={m.href} onClick={onLinkClick}>
                     {m.title}
                   </a>
                 </h3>
@@ -256,6 +285,22 @@ export function Plan({ household, version, onChanged }: { household: Household; 
               ))}
             </div>
           </div>
+          {data.loans.releases.length > 0 && (
+            <div className="card stack" style={{ gap: 8 }}>
+              <strong>When a loan is paid off</strong>
+              <span className="small" style={{ color: "var(--ink-soft)" }}>
+                Put its installment into the goals instead of everyday spending. The road above shows the difference.
+              </span>
+              <div className="chips" role="group" aria-label="Paid-off installments">
+                <button type="button" className="chip" aria-pressed={withReleases} onClick={() => setWithReleases(true)}>
+                  Into the goals
+                </button>
+                <button type="button" className="chip" aria-pressed={!withReleases} onClick={() => setWithReleases(false)}>
+                  Keep for spending
+                </button>
+              </div>
+            </div>
+          )}
           <div className="card stack" style={{ gap: 8 }}>
             <strong>A rule for bonuses</strong>
             <span className="small" style={{ color: "var(--ink-soft)" }}>
@@ -270,6 +315,8 @@ export function Plan({ household, version, onChanged }: { household: Household; 
           </div>
         </div>
       </section>
+
+      <WhatWeHave household={household} accounts={accounts} />
 
       <section className="card stack" aria-labelledby="order-h">
         <div className="row between">
@@ -309,5 +356,64 @@ export function Plan({ household, version, onChanged }: { household: Household; 
         {error && <div className="error">{error}</div>}
       </section>
     </>
+  );
+}
+
+/** Net worth for the long view: what is held, the deposits maturing, the loans running down. */
+function WhatWeHave({ household, accounts }: { household: Household; accounts: Account[] }) {
+  const cur = household.currency;
+  if (!accounts.length) return null;
+  const owed = (a: Account) => a.type === "credit" || a.type === "loan";
+  const have = accounts.filter((a) => !owed(a)).reduce((s, a) => s + a.balanceMinor, 0);
+  const owe = accounts.filter(owed).reduce((s, a) => s - a.balanceMinor, 0);
+  const deposits = accounts.filter((a) => a.type === "deposit" && a.deposit).sort((a, b) => (a.endDate ?? "").localeCompare(b.endDate ?? ""));
+  const loans = accounts.filter((a) => a.type === "loan" && a.balanceMinor < 0);
+  return (
+    <section className="card stack" aria-labelledby="have-h">
+      <div className="row between">
+        <h2 id="have-h">What we have</h2>
+        <a className="small" href={`/h/${household.id}/family/accounts`} onClick={onLinkClick}>
+          Accounts
+        </a>
+      </div>
+      <dl className="ledger-sum" style={{ maxWidth: 520 }}>
+        <div>
+          <dt>We have</dt>
+          <dd>{formatMoney(have, cur, { symbol: false })}</dd>
+        </div>
+        <div>
+          <dt>We owe</dt>
+          <dd style={{ color: owe > 0 ? "var(--rust)" : undefined }}>{formatMoney(owe, cur, { symbol: false })}</dd>
+        </div>
+        <div>
+          <dt>Ours, all told</dt>
+          <dd>{formatMoney(have - owe, cur, { symbol: false })}</dd>
+        </div>
+      </dl>
+      {deposits.map((a) => (
+        <div key={a.id} className="kv small">
+          <span>
+            <strong>{a.name}</strong>{" "}
+            <span className="muted">
+              · {a.rateBp !== null ? rateLabel(a.rateBp) : ""} · matures {a.endDate ? `${shortDate(a.endDate)} ${a.endDate.slice(0, 4)}` : "—"}
+              {a.goalName ? ` · for ${a.goalName}` : ""}
+            </span>
+          </span>
+          <span className="mono">{formatMoney(Math.round(a.deposit!.maturityValueMinor / 10 ** minorDigits(cur)) * 10 ** minorDigits(cur), cur, { symbol: false })} then</span>
+        </div>
+      ))}
+      {loans.map((a) => (
+        <div key={a.id} className="kv small">
+          <span>
+            <strong>{a.name}</strong>{" "}
+            <span className="muted">
+              · {formatMoney(-a.balanceMinor, cur, { symbol: false })} left
+              {a.installmentMinor ? ` · ${formatMoney(a.installmentMinor, cur, { symbol: false })} a month` : ""}
+            </span>
+          </span>
+          <span className="mono">{a.loan?.payoffMonth ? `paid off ${monthName(a.loan.payoffMonth)}` : a.endDate ? `by ${shortDate(a.endDate)} ${a.endDate.slice(0, 4)}` : "no date"}</span>
+        </div>
+      ))}
+    </section>
   );
 }

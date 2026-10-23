@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { monthName } from "../../../shared/plan";
-import { api, ApiError, type Category, type DecideCard, type Household } from "../api";
+import { todayIn } from "../../../shared/dates";
+import { api, ApiError, type Account, type Category, type DecideCard, type Household } from "../api";
 import { onLinkClick } from "../router";
 import { CategorySelect, Checks, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
 
@@ -8,7 +9,7 @@ import { CategorySelect, Checks, amountInput, categoryLabel, formatMoney, shortD
  * Decide: quick calls that keep the book clean, one card at a time. Every card has two clear
  * answers and a way to leave it for later; nothing here needs a spreadsheet.
  */
-export function Decide({ household, categories, version, onChanged }: { household: Household; categories: Category[]; version: number; onChanged: () => void }) {
+export function Decide({ household, accounts, categories, version, onChanged }: { household: Household; accounts: Account[]; categories: Category[]; version: number; onChanged: () => void }) {
   const [cards, setCards] = useState<DecideCard[] | null>(null);
   const [idx, setIdx] = useState(0);
   const [results, setResults] = useState<string[]>([]);
@@ -236,6 +237,10 @@ export function Decide({ household, categories, version, onChanged }: { househol
         </section>
       )}
 
+      {card?.kind === "maturity" && <MaturityCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
+
+      {card?.kind === "installment" && <InstallmentCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
+
       {card?.kind === "category" && <CategoryCard key={card.key} card={card} household={household} categories={categories} busy={busy} canWrite={canWrite} act={act} later={later} />}
 
       {card?.kind === "plan" && (
@@ -334,6 +339,127 @@ function CategoryCard({
               Leave it for later
             </button>
           </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+type CardProps<K extends DecideCard["kind"]> = {
+  card: Extract<DecideCard, { kind: K }>;
+  household: Household;
+  accounts: Account[];
+  busy: boolean;
+  canWrite: boolean;
+  act: (run: () => Promise<unknown>, result: string) => Promise<void>;
+  later: (what: string) => void;
+};
+
+const spendable = (accounts: Account[]) => accounts.filter((a) => !a.closedAt && ["checking", "savings", "cash", "wallet"].includes(a.type));
+const termLabel = (t: number) => (t < 12 ? `${t} months` : t === 12 ? "1 year" : t % 12 ? `${t} months` : `${t / 12} years`);
+
+/** A fixed deposit at maturity: renew it as it is, or move the money out. */
+function MaturityCard({ card, household, accounts, busy, canWrite, act, later }: CardProps<"maturity">) {
+  const cur = household.currency;
+  const today = todayIn(household.timezone);
+  const others = spendable(accounts);
+  const [to, setTo] = useState(card.settleAccountId ?? others[0]?.id ?? "");
+  const [interest, setInterest] = useState(card.interestMinor > 0 ? amountInput(card.interestMinor, cur) : "");
+  const days = Math.round((Date.parse(card.maturity) - Date.parse(today)) / 86_400_000);
+  const keptIn = card.payout === "maturity";
+  const when = days < 0 ? `matured on ${shortDate(card.maturity)}` : days === 0 ? "matures today" : `matures in ${days} ${days === 1 ? "day" : "days"}`;
+  return (
+    <section className="decide-card" aria-label="Fixed deposit maturing">
+      <span className="eyebrow" style={{ color: "var(--green-deep)" }}>
+        Fixed deposit{card.institution ? ` · ${card.institution}` : ""}
+      </span>
+      <h2>
+        {card.name} {when}. Renew it, or move the money?
+      </h2>
+      <div className="tally">
+        <div>
+          <span className="eyebrow">In it now</span>
+          <span className="mono" style={{ fontWeight: 600, fontSize: 16 }}>{formatMoney(card.balanceMinor, cur, { symbol: false })}</span>
+        </div>
+        <div>
+          <span className="eyebrow">{keptIn ? "Interest at maturity" : "Interest since last payout"}</span>
+          <span className="mono amount-in" style={{ fontWeight: 600, fontSize: 16 }}>+{formatMoney(card.interestMinor, cur, { symbol: false })}</span>
+        </div>
+      </div>
+      {card.goalName && <span className="small" style={{ color: "var(--ink-soft)" }}>It is kept for {card.goalName}; renewing keeps it there.</span>}
+      {canWrite && (
+        <>
+          <div className="row" style={{ alignItems: "flex-end" }}>
+            <label style={{ flex: "1 1 160px" }}>
+              Interest the bank paid
+              <input inputMode="decimal" value={interest} onChange={(e) => setInterest(e.target.value)} />
+            </label>
+            <label style={{ flex: "1 1 180px" }}>
+              If closing, move it to
+              <select value={to} onChange={(e) => setTo(e.target.value)}>
+                {others.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="actions">
+            <button type="button" disabled={busy} onClick={() => act(() => api.renewDeposit(household.id, card.accountId, { interest, termMonths: card.termMonths }), `${card.name} renewed for ${termLabel(card.termMonths)}.`)}>
+              Renew for another {card.termMonths === 12 ? "year" : termLabel(card.termMonths)}
+            </button>
+            <button type="button" className="secondary" disabled={busy || !to} onClick={() => act(() => api.closeAccount(household.id, card.accountId, { interest, toAccountId: to }), `${card.name} closed into ${others.find((a) => a.id === to)?.name ?? "the account"}.`)}>
+              Close it and move the money
+            </button>
+            <button type="button" className="quiet" onClick={() => later(card.name)}>
+              Leave it for later
+            </button>
+          </div>
+          <span className="small muted">A different rate or term? Use Renew or close on the Accounts page.</span>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** A loan installment coming up or past its date: log it as paid in one tap. */
+function InstallmentCard({ card, household, accounts, busy, canWrite, act, later }: CardProps<"installment">) {
+  const cur = household.currency;
+  const today = todayIn(household.timezone);
+  const others = spendable(accounts);
+  const [from, setFrom] = useState(card.settleAccountId ?? others[0]?.id ?? "");
+  const overdue = card.due < today;
+  const principal = card.installmentMinor - card.interestMinor;
+  return (
+    <section className="decide-card" aria-label="Loan installment">
+      <span className="eyebrow" style={{ color: overdue ? "var(--rust)" : "var(--marigold-deep)" }}>
+        Loan installment{card.institution ? ` · ${card.institution}` : ""}
+      </span>
+      <h2>
+        {formatMoney(card.installmentMinor, cur)} for {card.name} {overdue ? `was due ${shortDate(card.due)}` : card.due === today ? "is due today" : `is due ${shortDate(card.due)}`}. Paid it?
+      </h2>
+      <span className="small" style={{ color: "var(--ink-soft)" }}>
+        {card.interestMinor > 0 ? `About ${formatMoney(card.interestMinor, cur)} is interest and ${formatMoney(principal, cur)} comes off the loan. ` : "No interest: all of it comes off the loan. "}
+        {formatMoney(Math.max(0, card.owedMinor - principal), cur)} will be left.
+      </span>
+      {canWrite && (
+        <>
+          <label style={{ maxWidth: 280 }}>
+            Paid from
+            <select value={from} onChange={(e) => setFrom(e.target.value)}>
+              {others.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </label>
+          <div className="actions">
+            <button
+              type="button"
+              disabled={busy || !from}
+              onClick={() => act(() => api.repayment(household.id, card.accountId, { amount: amountInput(card.installmentMinor, cur), date: overdue ? card.due : today, otherAccountId: from }), `${card.name}: ${formatMoney(card.installmentMinor, cur)} logged.`)}
+            >
+              Yes, log {formatMoney(card.installmentMinor, cur)}
+            </button>
+            <button type="button" className="quiet" onClick={() => later(`${card.name} installment`)}>
+              Not yet
+            </button>
+          </div>
+          <span className="small muted">A different amount? Use Log a payment on the Accounts page.</span>
         </>
       )}
     </section>

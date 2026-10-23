@@ -624,9 +624,11 @@ main.app {
 }
 .ledger-sum {
   margin: 0;
-  flex: 1 1 280px;
   min-width: 0;
   border-top: 2px solid var(--ink);
+}
+.hero .ledger-sum {
+  flex: 1 1 280px;
 }
 .ledger-sum div {
   display: flex;

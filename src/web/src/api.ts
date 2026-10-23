@@ -36,16 +36,22 @@ export type Household = {
   currency: string;
   timezone: string;
   monthStartDay: number;
+  typicalIncomeMinor: number | null;
+  typicalSpendMinor: number | null;
   inboundAddress: string;
   me: { id: string; role: Role; name: string };
 };
 
 export type Member = { id: string; name: string; email: string; role: Role; color: string; joinedAt: string | null; invitedAt: string };
 
+export type AccountType = "checking" | "savings" | "cash" | "wallet" | "deposit" | "lent" | "credit" | "loan";
+export type DepositPayout = "maturity" | "quarterly" | "monthly";
+
 export type Account = {
   id: string;
   name: string;
-  type: "checking" | "credit" | "cash" | "savings";
+  type: AccountType;
+  institution: string | null;
   isShared: boolean;
   statementSenderPattern: string | null;
   csvMapping: CsvMapping | null;
@@ -53,7 +59,52 @@ export type Account = {
   lastStatementAt: string | null;
   openingBalanceMinor: number | null;
   openingBalanceDate: string | null;
+  goalId: string | null;
+  goalName: string | null;
+  principalMinor: number | null;
+  rateBp: number | null;
+  startDate: string | null;
+  endDate: string | null;
+  depositPayout: DepositPayout | null;
+  settleAccountId: string | null;
+  installmentMinor: number | null;
+  installmentDay: number | null;
+  closedAt: string | null;
+  /** Today, from the starting balance; negative for what is owed. */
+  balanceMinor: number;
+  deposit: { accruedMinor: number; maturityValueMinor: number; totalInterestMinor: number; daysToMaturity: number; termMonths: number } | null;
+  loan: {
+    owedMinor: number;
+    nextDue: string | null;
+    settledThisMonth: boolean;
+    monthsLeft: number | null;
+    payoffMonth: string | null;
+    interestLeftMinor: number | null;
+    nextInterestMinor: number;
+    paidThisMonthMinor: number;
+  } | null;
 };
+
+export type AccountBody = Partial<{
+  name: string;
+  type: AccountType;
+  institution: string;
+  isShared: boolean;
+  statementSenderPattern: string;
+  balance: string;
+  balanceDate: string;
+  goalId: string | null;
+  principal: string;
+  rate: string;
+  startDate: string;
+  endDate: string | null;
+  termMonths: number;
+  payout: DepositPayout;
+  settleAccountId: string | null;
+  installment: string;
+  installmentDay: number;
+  closed: boolean;
+}>;
 
 export type CategoryKind = "need" | "want" | "saving" | "transfer" | "income";
 export type Category = { id: string; parentId: string | null; name: string; kind: CategoryKind; sort: number };
@@ -168,7 +219,17 @@ export type Goal = {
   note: string | null;
   completedAt: string | null;
   savedMinor: number;
+  savedFrom: "accounts" | "records";
+  accounts: { id: string; name: string; type: string; balanceMinor: number }[];
   parts: GoalPart[];
+};
+
+export type LoanCommitments = {
+  monthlyMinor: number;
+  monthlyInterestMinor: number;
+  dueThisMonthMinor: number;
+  paidThisMonthMinor: number;
+  releases: { accountId: string; name: string; fromMonth: string; amountMinor: number }[];
 };
 
 export type PlanData = {
@@ -176,7 +237,8 @@ export type PlanData = {
   startMonth: string;
   goals: Goal[];
   plannedMinor: number;
-  basis: { months: number; incomeMinor: number; spendMinor: number };
+  basis: { source: "book" | "typical" | "none"; months: number; incomeMinor: number; spendMinor: number };
+  loans: LoanCommitments;
   spareMinor: number | null;
 };
 
@@ -194,11 +256,14 @@ export type Today = {
   goalsMinor: number;
   plannedMinor: number;
   movedMinor: number;
+  loansMinor: number;
+  worth: { haveMinor: number; oweMinor: number; netMinor: number; accruedMinor: number };
+  needsStart: boolean;
   everydayLeftMinor: number;
   perDayMinor: number;
   uncategorizedCount: number;
   envelopes: { categoryId: string; name: string; budgetMinor: number; spentMinor: number }[];
-  bank: { accountId: string; name: string; lastLineDate: string | null; questions: number }[];
+  bank: { accountId: string; name: string; type: AccountType; balanceMinor: number; lastLineDate: string | null; questions: number }[];
   bookMatchesThrough: string | null;
   decideCount: number;
   nextGoal: (Goal & { outcome: { doneMonth: string | null; lateMonths: number | null } | null }) | null;
@@ -224,7 +289,22 @@ export type DecideCard =
       suspects: { id: string; date: string; amountMinor: number; direction: string; name: string | null; byName: string | null }[];
     }
   | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null }
-  | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number };
+  | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number }
+  | {
+      kind: "maturity";
+      key: string;
+      accountId: string;
+      name: string;
+      institution: string | null;
+      maturity: string;
+      balanceMinor: number;
+      interestMinor: number;
+      payout: string;
+      termMonths: number;
+      settleAccountId: string | null;
+      goalName: string | null;
+    }
+  | { kind: "installment"; key: string; accountId: string; name: string; institution: string | null; due: string; installmentMinor: number; interestMinor: number; settleAccountId: string | null; owedMinor: number };
 
 export type LogHints = {
   repeats: { name: string; amountMinor: number; direction: "out" | "in"; accountId: string; categoryId: string | null; count: number; last: string }[];
@@ -256,8 +336,14 @@ export const api = {
   inviteMember: (id: string, body: { email: string; name: string; role: Role }) => request<Member>("POST", `${h(id)}/members`, body),
 
   accounts: (id: string) => request<Account[]>("GET", `${h(id)}/accounts`),
-  createAccount: (id: string, body: { name: string; type: Account["type"]; statementSenderPattern: string; isShared: boolean }) =>
-    request<Account>("POST", `${h(id)}/accounts`, body),
+  createAccount: (id: string, body: AccountBody) => request<{ id: string }>("POST", `${h(id)}/accounts`, body),
+  updateAccount: (id: string, accountId: string, body: AccountBody) => request<{ ok: true }>("PATCH", `${h(id)}/accounts/${accountId}`, body),
+  repayment: (id: string, accountId: string, body: { amount: string; date: string; otherAccountId: string; note?: string }) =>
+    request<{ principalMinor: number; interestMinor: number }>("POST", `${h(id)}/accounts/${accountId}/repayment`, body),
+  renewDeposit: (id: string, accountId: string, body: { interest?: string; termMonths?: number; rate?: string }) =>
+    request<{ ok: true; startDate: string; endDate: string; principalMinor: number }>("POST", `${h(id)}/accounts/${accountId}/renew`, body),
+  closeAccount: (id: string, accountId: string, body: { interest?: string; toAccountId?: string | null; date?: string }) =>
+    request<{ ok: true; movedMinor: number }>("POST", `${h(id)}/accounts/${accountId}/close`, body),
   saveCsvMapping: (id: string, accountId: string, mapping: CsvMapping) => request<{ ok: true }>("PUT", `${h(id)}/accounts/${accountId}/csv-mapping`, { mapping }),
   importCsv: (id: string, accountId: string, body: { csv: string; filename: string; mapping: CsvMapping; saveMapping: boolean }) =>
     request<ImportResult>("POST", `${h(id)}/accounts/${accountId}/import-csv`, body),
@@ -308,7 +394,7 @@ export const api = {
   acceptSuggested: (id: string) => request<{ accepted: number }>("POST", `${h(id)}/review/accept-suggested`),
   acceptMany: (id: string, lineIds: string[], categoryId: string | null) => request<{ accepted: number }>("POST", `${h(id)}/review/accept-many`, { lineIds, categoryId }),
 
-  updateHousehold: (id: string, body: { name?: string; payDay?: number }) => request<{ ok: true }>("PATCH", h(id), body),
+  updateHousehold: (id: string, body: { name?: string; payDay?: number; typicalIncome?: string; typicalSpend?: string }) => request<{ ok: true }>("PATCH", h(id), body),
   today: (id: string) => request<Today>("GET", `${h(id)}/today`),
   decideCards: (id: string) => request<DecideCard[]>("GET", `${h(id)}/decide`),
   snooze: (id: string, key: string, title: string) => request<{ ok: true; until: string }>("POST", `${h(id)}/decide/snooze`, { key, title }),

@@ -14,7 +14,7 @@ import { simulatePlan, type PlanGoal } from "../../../shared/plan";
 import { schema, type Db } from "../../db";
 import { newId } from "../../lib/ids";
 import { loadMerchantIndex } from "../../ledger/merchants";
-import { bookBalance, loadGoals, monthlyBasis, toPlanGoals } from "../../ledger/overview";
+import { bookBalance, loadAccountViews, loadGoals, loanCommitments, monthlyBasis, onEverydayAccounts, spareAfter, toPlanGoals, type AccountView } from "../../ledger/overview";
 import { summarize } from "../../ledger/summary";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
@@ -59,7 +59,64 @@ export type DecideCard =
     }
   | { kind: "balance"; key: string; accountId: string; accountName: string; bankMinor: number; bookMinor: number; asOf: string; suspects: { id: string; date: string; amountMinor: number; direction: string; name: string | null; byName: string | null }[] }
   | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null }
-  | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number };
+  | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number }
+  | {
+      kind: "maturity";
+      key: string;
+      accountId: string;
+      name: string;
+      institution: string | null;
+      maturity: string;
+      balanceMinor: number;
+      interestMinor: number;
+      payout: string;
+      termMonths: number;
+      settleAccountId: string | null;
+      goalName: string | null;
+    }
+  | { kind: "installment"; key: string; accountId: string; name: string; institution: string | null; due: string; installmentMinor: number; interestMinor: number; settleAccountId: string | null; owedMinor: number };
+
+/** Deposits maturing within two weeks (or already matured) and installments due within five days. */
+function deadlineCards(accounts: AccountView[], today: string): DecideCard[] {
+  const cards: DecideCard[] = [];
+  for (const a of accounts) {
+    if (a.closedAt) continue;
+    if (a.type === "deposit" && a.deposit && a.endDate && a.deposit.daysToMaturity <= 14) {
+      cards.push({
+        kind: "maturity",
+        key: `mat:${a.id}:${a.endDate}`,
+        accountId: a.id,
+        name: a.name,
+        institution: a.institution,
+        maturity: a.endDate,
+        balanceMinor: a.balanceMinor,
+        interestMinor: a.depositPayout === "maturity" || !a.depositPayout ? a.deposit.maturityValueMinor - (a.principalMinor ?? a.balanceMinor) : a.deposit.accruedMinor,
+        payout: a.depositPayout ?? "maturity",
+        termMonths: a.deposit.termMonths,
+        settleAccountId: a.settleAccountId,
+        goalName: a.goalName,
+      });
+    }
+    if (a.type === "loan" && a.loan && a.installmentMinor && a.loan.nextDue && a.loan.owedMinor > 0) {
+      // Due within five days, or this month's still unpaid after its date.
+      if (daysBetween(today, a.loan.nextDue) <= 5) {
+        cards.push({
+          kind: "installment",
+          key: `emi:${a.id}:${a.loan.nextDue}`,
+          accountId: a.id,
+          name: a.name,
+          institution: a.institution,
+          due: a.loan.nextDue,
+          installmentMinor: Math.min(a.installmentMinor, a.loan.owedMinor + a.loan.nextInterestMinor),
+          interestMinor: a.loan.nextInterestMinor,
+          settleAccountId: a.settleAccountId,
+          owedMinor: a.loan.owedMinor,
+        });
+      }
+    }
+  }
+  return cards;
+}
 
 async function forwardingCards(db: Db, householdId: string): Promise<DecideCard[]> {
   const rows = await db.query.statementEmails.findMany({ where: and(eq(schema.statementEmails.householdId, householdId), eq(schema.statementEmails.status, "forwarding")), orderBy: [desc(schema.statementEmails.receivedAt)], limit: 3 });
@@ -202,24 +259,26 @@ async function balanceCards(db: Db, householdId: string, memberId: string): Prom
 }
 
 /** At most one suggestion: fund the first goal that is waiting its turn and would be late. */
-async function planCards(db: Db, household: { id: string; currency: string; timezone: string }): Promise<DecideCard[]> {
+async function planCards(db: Db, household: { id: string; currency: string; timezone: string }, accounts: AccountView[]): Promise<DecideCard[]> {
   const today = todayIn(household.timezone);
   const month = today.slice(0, 7);
-  const [goals, basis] = await Promise.all([loadGoals(db, household.id), monthlyBasis(db, household.id, month)]);
-  if (!basis.months || !goals.length) return [];
+  const [goals, basis] = await Promise.all([loadGoals(db, household.id, today), monthlyBasis(db, household.id, month)]);
+  if (basis.source === "none" || !goals.length) return [];
   const plan = toPlanGoals(goals);
   const planned = plan.reduce((s, g) => s + g.monthlyMinor, 0);
-  const spare = basis.incomeMinor - basis.spendMinor - planned;
+  const loans = loanCommitments(accounts);
+  const spare = spareAfter(basis, planned, loans) ?? 0;
   if (spare <= Math.max(0, basis.incomeMinor * 0.03)) return [];
   const startMonth = shiftMonth(month, 1);
-  const base = simulatePlan(plan, { startMonth });
+  const releases = loans.releases;
+  const base = simulatePlan(plan, { startMonth, releases });
   const waiting = plan.find((g) => g.monthlyMinor === 0 && g.wantedBy && base.outcomes.find((o) => o.id === g.id)?.lateMonths !== null && (base.outcomes.find((o) => o.id === g.id)!.lateMonths ?? 0) > 0);
   if (!waiting) return [];
   const key = `fund:${waiting.id}`;
   const snoozed = await db.query.suggestions.findFirst({ where: and(eq(schema.suggestions.householdId, household.id), eq(schema.suggestions.ruleKey, key), gte(schema.suggestions.snoozedUntil, today)) });
   if (snoozed) return [];
 
-  const outcomeWith = (extra: number) => simulatePlan(plan.map((g): PlanGoal => (g.id === waiting.id ? { ...g, monthlyMinor: extra } : g)), { startMonth }).outcomes.find((o) => o.id === waiting.id)!;
+  const outcomeWith = (extra: number) => simulatePlan(plan.map((g): PlanGoal => (g.id === waiting.id ? { ...g, monthlyMinor: extra } : g)), { startMonth, releases }).outcomes.find((o) => o.id === waiting.id)!;
   // Smallest tidy monthly amount that gets it there on time, if the spare money allows.
   let lo = 0;
   let hi = spare;
@@ -245,11 +304,13 @@ export async function loadDecideCards(c: AppContext): Promise<DecideCard[]> {
   const db = c.get("db");
   const household = c.get("household");
   const memberId = c.get("member").id;
-  const [fwd, lines, balances, plan] = await Promise.all([forwardingCards(db, household.id), lineCards(db, household.id, memberId), balanceCards(db, household.id, memberId), planCards(db, household)]);
+  const today = todayIn(household.timezone);
+  const accounts = await loadAccountViews(db, household.id, today);
+  const [fwd, lines, balances, plan] = await Promise.all([forwardingCards(db, household.id), lineCards(db, household.id, memberId), balanceCards(db, household.id, memberId), planCards(db, household, accounts)]);
   const twins = lines.filter((x) => x.kind === "twin");
   const categories = lines.filter((x) => x.kind === "category");
-  // Forwarding checks first (they expire), then anything that could count money twice.
-  return [...fwd, ...twins, ...balances, ...plan, ...categories];
+  // Forwarding checks and deadlines first, then anything that could count money twice.
+  return [...fwd, ...deadlineCards(accounts, today), ...twins, ...balances, ...plan, ...categories];
 }
 
 homeRoutes.get("/decide", async (c) => c.json(await loadDecideCards(c)));
@@ -284,9 +345,9 @@ homeRoutes.get("/today", async (c) => {
     db
       .select({ amountMinor: schema.transactions.amountMinor, direction: schema.transactions.direction, categoryId: schema.transactions.categoryId, transferPairId: schema.transactions.transferPairId })
       .from(schema.transactions)
-      .where(and(eq(schema.transactions.householdId, household.id), between(schema.transactions.date, from, to), isNull(schema.transactions.voidedAt))),
+      .where(and(eq(schema.transactions.householdId, household.id), between(schema.transactions.date, from, to), isNull(schema.transactions.voidedAt), onEverydayAccounts())),
     db.query.budgets.findMany({ where: and(eq(schema.budgets.householdId, household.id), eq(schema.budgets.month, month)) }),
-    loadGoals(db, household.id),
+    loadGoals(db, household.id, today),
     monthlyBasis(db, household.id, month),
     db
       .select({ total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
@@ -307,9 +368,14 @@ homeRoutes.get("/today", async (c) => {
   const plannedMinor = active.reduce((sum, g) => sum + g.monthlyPlanMinor, 0);
   const movedMinor = Number(moved[0]?.total ?? 0);
   const goalsMinor = Math.max(plannedMinor, movedMinor);
-  const incomeExpected = s.income === 0 && basis.months > 0;
+  const views = await loadAccountViews(db, household.id, today);
+  const loans = loanCommitments(views);
+  // Installments: principal already paid this month is a transfer, so it is taken off here; an
+  // installment still due is set aside whole (its interest is not spending yet).
+  const loansMinor = loans.paidThisMonthMinor + loans.dueThisMonthMinor;
+  const incomeExpected = s.income === 0 && basis.source !== "none";
   const incomeMinor = incomeExpected ? basis.incomeMinor : s.income;
-  const everydayLeftMinor = incomeMinor - s.spent - goalsMinor;
+  const everydayLeftMinor = incomeMinor - s.spent - goalsMinor - loansMinor;
   const payday = nextPayday(today, household.monthStartDay);
   const daysLeft = Math.max(1, daysBetween(today, payday));
 
@@ -320,20 +386,24 @@ homeRoutes.get("/today", async (c) => {
     .map((b) => ({ categoryId: b.categoryId, name: tops.get(b.categoryId)!.name, budgetMinor: b.amountMinor, spentMinor: s.perTop.get(b.categoryId) ?? 0 }))
     .sort((a, b) => b.spentMinor / b.budgetMinor - a.spentMinor / a.budgetMinor);
 
-  const accounts = await db.query.accounts.findMany({ where: eq(schema.accounts.householdId, household.id), columns: { id: true, name: true } });
+  const accounts = views.filter((a) => !a.closedAt);
   const lastBy = new Map(lastLines.map((l) => [l.accountId, l.last]));
   const questions = new Map<string, number>();
   for (const card of cards) {
     if (card.kind === "balance") questions.set(card.accountId, (questions.get(card.accountId) ?? 0) + 1);
   }
   const twins = cards.filter((x) => x.kind === "twin").length;
-  const bank = accounts.map((a) => ({ accountId: a.id, name: a.name, lastLineDate: lastBy.get(a.id) ?? null, questions: questions.get(a.id) ?? 0 }));
+  const bank = accounts.map((a) => ({ accountId: a.id, name: a.name, type: a.type, balanceMinor: a.balanceMinor, lastLineDate: lastBy.get(a.id) ?? null, questions: questions.get(a.id) ?? 0 }));
+  // What we have: everything held, less everything owed. Deposit interest earned so far is shown apart.
+  const haveMinor = accounts.filter((a) => a.type !== "credit" && a.type !== "loan").reduce((sum, a) => sum + a.balanceMinor, 0);
+  const oweMinor = accounts.filter((a) => a.type === "credit" || a.type === "loan").reduce((sum, a) => sum - a.balanceMinor, 0);
+  const accruedMinor = accounts.reduce((sum, a) => sum + (a.deposit?.accruedMinor ?? 0), 0);
   const seen = bank.map((b) => b.lastLineDate).filter((d): d is string => Boolean(d)).sort();
 
   // The next goal on the road and when it lands at the current plan.
   const startMonth = shiftMonth(month, 1);
   const plan = toPlanGoals(goals);
-  const sim = plan.length ? simulatePlan(plan, { startMonth }) : null;
+  const sim = plan.length ? simulatePlan(plan, { startMonth, releases: loans.releases }) : null;
   const next = active[0] ? { ...active[0], outcome: sim?.outcomes.find((o) => o.id === active[0]!.id) ?? null } : null;
 
   return c.json({
@@ -348,6 +418,9 @@ homeRoutes.get("/today", async (c) => {
     goalsMinor,
     plannedMinor,
     movedMinor,
+    loansMinor,
+    worth: { haveMinor, oweMinor, netMinor: haveMinor - oweMinor, accruedMinor },
+    needsStart: accounts.length === 0 || accounts.every((a) => a.openingBalanceDate === null),
     everydayLeftMinor,
     // Whole currency units: "Rs 3,200 a day", never "Rs 3,245.55 a day".
     perDayMinor: Math.floor(Math.max(0, everydayLeftMinor) / daysLeft / 10 ** minorDigits(household.currency)) * 10 ** minorDigits(household.currency),

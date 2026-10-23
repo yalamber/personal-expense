@@ -10,7 +10,16 @@ export type MemberRole = "admin" | "member" | "viewer";
 export type Variables = {
   db: Db;
   user: SessionUser;
-  household: { id: string; name: string; currency: string; timezone: string; monthStartDay: number; inboundToken: string };
+  household: {
+    id: string;
+    name: string;
+    currency: string;
+    timezone: string;
+    monthStartDay: number;
+    inboundToken: string;
+    typicalIncomeMinor: number | null;
+    typicalSpendMinor: number | null;
+  };
   member: { id: string; role: MemberRole; name: string };
 };
 

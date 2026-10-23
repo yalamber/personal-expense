@@ -33,6 +33,12 @@ export const households = sqliteTable("households", {
   currency: text("currency").notNull().default("USD"),
   timezone: text("timezone").notNull().default("UTC"),
   monthStartDay: integer("month_start_day").notNull().default(1),
+  /**
+   * A typical month, typed in when the household starts, so the plan works on day one. Used
+   * until the book has a few full months of its own.
+   */
+  typicalIncomeMinor: integer("typical_income_minor"),
+  typicalSpendMinor: integer("typical_spend_minor"),
   /** Secret token in the inbound address: stmt+<token>@domain */
   inboundToken: text("inbound_token").notNull().unique(),
   createdAt: text("created_at").notNull().default(now),
@@ -81,13 +87,22 @@ export const magicLinks = sqliteTable("magic_links", {
   createdAt: text("created_at").notNull().default(now),
 });
 
+/**
+ * Money we have (checking, savings, cash, mobile wallet, fixed deposit, money lent to someone)
+ * and money we owe (credit card, loan). Balances of what we owe are negative.
+ */
+export const accountTypes = ["checking", "savings", "cash", "wallet", "deposit", "lent", "credit", "loan"] as const;
+export const depositPayouts = ["maturity", "quarterly", "monthly"] as const;
+
 export const accounts = sqliteTable(
   "accounts",
   {
     id: text("id").primaryKey(),
     householdId: text("household_id").notNull().references(() => households.id),
     name: text("name").notNull(),
-    type: text("type", { enum: ["checking", "credit", "cash", "savings"] }).notNull(),
+    type: text("type", { enum: accountTypes }).notNull(),
+    /** Bank, provider or person: "Nabil Bank", "eSewa", or the friend a loan is from. */
+    institution: text("institution"),
     ownerMemberId: text("owner_member_id").references(() => members.id),
     isShared: integer("is_shared", { mode: "boolean" }).notNull().default(true),
     /**
@@ -105,6 +120,26 @@ export const accounts = sqliteTable(
     openingBalanceDate: text("opening_balance_date"),
     /** A balance question someone chose to look at later, keyed by the statement date it was about. */
     balanceSnoozedFor: text("balance_snoozed_for"),
+    /** The goal this account's money is for (a land FD, an emergency savings account). */
+    goalId: text("goal_id"),
+    /**
+     * Fixed deposits and loans. principal: amount put in or borrowed; rate: yearly, in basis
+     * points (8.5% = 850, 0 for a friendly loan); start and end: opened and matures, or borrowed
+     * and due to be repaid by.
+     */
+    principalMinor: integer("principal_minor"),
+    rateBp: integer("rate_bp"),
+    startDate: text("start_date"),
+    endDate: text("end_date"),
+    /** Deposits: maturity = interest stays in and compounds quarterly; quarterly/monthly = paid out. */
+    depositPayout: text("deposit_payout", { enum: depositPayouts }),
+    /** The account deposit interest is paid to, or loan installments are paid from. */
+    settleAccountId: text("settle_account_id"),
+    /** Loans: the monthly installment (EMI) and the day of the month it is due. */
+    installmentMinor: integer("installment_minor"),
+    installmentDay: integer("installment_day"),
+    /** A closed account (a matured FD, a closed card) keeps its history but leaves the totals. */
+    closedAt: text("closed_at"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("accounts_household").on(t.householdId)],

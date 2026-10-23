@@ -27,8 +27,27 @@ The app has three spaces plus Family, and Log on every screen:
 - **Plan**: goals funded in priority order, drawn as one road with a lever for the monthly amount
   and a price-rise guess. Goals have parts (cost items, or stages for a build), wanted-by dates,
   and money moved in from accounts.
-- **Family**: forwarding setup, accounts (CSV import, balance checks), people, envelopes, inbox,
-  payday, CSV export.
+- **Family**: starting point, forwarding setup, accounts, people, envelopes, inbox, payday,
+  CSV export.
+
+**Day one, not month three.** The starting point (Family › Starting point) takes what the family
+has and owes today, so balances, Today and the Plan are right from the first day:
+
+- **Accounts with a starting balance**: bank, savings, cash and wallets. A balance typed for today
+  means "right now"; anything logged later today still counts.
+- **Fixed deposits**: amount, yearly rate, start, term or maturity date, and whether interest stays
+  in (compounded quarterly) or is paid out. Interest earned so far and the value at maturity are
+  worked out; two weeks before maturity Decide asks to renew it or close it into an account.
+- **Loans we owe**: amount still owed, rate (empty for a friendly loan), and the installment, or
+  months left to work the EMI out. Paying one splits it: the month's interest is spending, the rest
+  comes off the loan. Decide asks five days before each installment, and the Plan shows when each
+  loan is paid off and can put its installment into the goals from then on.
+- **Money we lent**, **credit cards**, and **a usual month** (income and spending, used by the Plan
+  until the book has two months of its own).
+- An account or deposit can be kept for a goal; the goal then counts its balance as saved.
+
+Today shows what we have (held, owed, FD interest so far) and the month's loan installments.
+Entries on deposits, loans and money lent are moves, never the month's income or spending.
 
 Next: bank-specific email parsers (needs three sample emails per bank), recurring bills, history
 backfill.
@@ -111,7 +130,10 @@ Statements go to `stmt+<household token>@leadbase.stream`. Either of these sends
   `stmt+<token>@leadbase.stream` matches it.
 
 A zone has one catch-all and it only covers the apex domain; subdomains need literal rules. The
-Worker reads the token whatever the domain, so a subdomain address can be added later.
+Worker reads the token whatever the domain, so a subdomain address works once mail reaches it. For
+`statements.leadbase.stream`: turn on Subaddressing, then add the custom address
+`stmt@statements.leadbase.stream` › Send to a Worker › `personal-expense` (Cloudflare adds the MX
+records for the subdomain). `stmt+<token>@statements.leadbase.stream` then reaches the household.
 
 ### Forwarding from Gmail
 
@@ -172,12 +194,14 @@ src/shared/          Pure helpers used by both sides: money, dates, CSV, column 
 src/worker/          Worker: API, email handler, parse step, cron
   db/schema.ts       The whole data model
   auth/              Magic links, sessions, generated signing secret
-  http/routes/       households, ledger (transactions, budgets, export), imports (CSV, review),
+  http/routes/       households, accounts (balances, deposits, loans, repayments, maturity),
+                     ledger (transactions, budgets, export), imports (CSV, review),
                      goals (goals, parts, money in, plan), home (today, decide, log hints)
   ledger/            Categories, merchant memory, transactions and transfers
   ingest/            Email Worker, parse step, ingest pipeline, parser registry
   lib/               Small Worker helpers
-src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise), used by both sides
+src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise, freed EMIs), used by both sides
+src/shared/deposit.ts, loan.ts   Fixed-deposit interest and maturity; EMI, interest split, months left
 src/web/             React web app (Vite root): Today, Log, Decide, Plan, Family
 migrations/          Drizzle-generated SQL applied by wrangler or the Cloudflare connector
 test/                Vitest unit tests and email fixtures
@@ -195,6 +219,6 @@ test/                Vitest unit tests and email fixtures
    - anything else fits (a bank line already there, two family entries): it waits in Decide
 5. Rows with a known category and nothing that fits are posted, already ✓✓. Everything else
    waits in Decide, where one choice files every row from that merchant.
-6. Typing in an account's balance from the bank (Family › Accounts) starts its book; later
+6. An account's starting balance (Family › Starting point or Accounts) starts its book; later
    figures are compared with the book, and a gap shows in Decide with the unconfirmed entries most
    likely to explain it.

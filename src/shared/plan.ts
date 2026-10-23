@@ -11,6 +11,7 @@
  *  - when a goal is reached, its monthly amount rolls to the first unfinished goal in priority order
  *  - optionally the whole monthly amount rises once a year (pay rises), and targets of things that
  *    get dearer (land, building, fees) rise by a yearly percentage
+ *  - money released later (a loan's installment once it is repaid) joins from its month on
  */
 
 export type PlanGoalKind = "safety" | "purchase" | "build" | "education" | "other";
@@ -40,6 +41,11 @@ export type PlanOptions = {
   priceRisePerYear?: number;
   /** Months to look ahead; goals not reached by then come back as not reached. */
   horizonMonths?: number;
+  /**
+   * Money that joins the plan later, such as a loan's installment once the loan is repaid: from
+   * fromMonth (YYYY-MM) on, amountMinor a month goes to the first unfinished goal.
+   */
+  releases?: { fromMonth: string; amountMinor: number }[];
 };
 
 export type GoalOutcome = {
@@ -142,6 +148,7 @@ export function simulatePlan(goals: PlanGoal[], options: PlanOptions): PlanResul
     const extraNow = extra * f;
     if (extraIndex >= 0 && doneAt[extraIndex] === null) give[extraIndex]! += extraNow;
     else spare += extraNow;
+    for (const r of options.releases ?? []) if (start + m >= monthIndex(r.fromMonth)) spare += r.amountMinor;
     give[open[0]!]! += spare;
     for (const i of open) {
       saved[i]! += give[i]!;

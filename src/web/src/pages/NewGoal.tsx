@@ -51,7 +51,10 @@ export function NewGoal({ household, accounts }: { household: Household; account
     setWantedBy(addDays(today, Math.round(365.25 * t.years)).slice(0, 7));
   }
 
-  const essentials = plan?.basis.months ? plan.basis.spendMinor : null;
+  const essentials = plan && plan.basis.source !== "none" && plan.basis.spendMinor > 0 ? plan.basis.spendMinor +
+        // The book already counts loan interest as spending; the principal part is a move.
+        plan.loans.monthlyMinor - (plan.basis.source === "book" ? plan.loans.monthlyInterestMinor : 0)
+      : null;
   const minor = (v: string) => (v.trim() ? parseAmountToMinor(v, cur) ?? 0 : 0);
   const partsTotal = parts.reduce((s, p) => s + Math.max(0, minor(p.amount)), 0);
   const targetMinor = tpl.kind === "safety" && essentials ? essentials * months : parts.some((p) => p.amount.trim()) ? partsTotal : minor(target);
@@ -136,7 +139,7 @@ export function NewGoal({ household, accounts }: { household: Household; account
                 </button>
               ))}
             </div>
-            <span className="small muted">A typical month costs about {formatMoney(essentials, cur)}, from the last {plan!.basis.months} months in the book.</span>
+            <span className="small muted">A typical month costs about {formatMoney(essentials, cur)}{plan!.loans.monthlyMinor ? ", loan installments included" : ""}, {plan!.basis.source === "book" ? `from the last ${plan!.basis.months} months in the book` : "going by your usual month"}.</span>
           </div>
         ) : (
           <label>

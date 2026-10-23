@@ -7,6 +7,7 @@ import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
 import { ensureCategories } from "../../ledger/categories";
 import { rememberCategory, resolveMerchant } from "../../ledger/merchants";
+import { KEPT_TYPES } from "../../ledger/overview";
 import { summarize } from "../../ledger/summary";
 import { createTransfer, findMatches, loadDedupeCandidates, transactionValues, DUPLICATE_WINDOW_DAYS } from "../../ledger/transactions";
 import { addDays } from "../../../shared/dates";
@@ -339,12 +340,16 @@ ledgerRoutes.get("/summary", async (c) => {
   const db = c.get("db");
   const household = c.get("household");
   const { from, to } = monthRange(month);
-  const [categories, txs, budgets, pending] = await Promise.all([
+  const [categories, all, budgets, pending, kept] = await Promise.all([
     loadCategories(c),
     queryTransactions(c, from, to),
     db.query.budgets.findMany({ where: and(eq(schema.budgets.householdId, household.id), eq(schema.budgets.month, month)) }),
     db.select({ id: schema.importLines.id }).from(schema.importLines).where(and(eq(schema.importLines.householdId, household.id), eq(schema.importLines.decision, "pending"))),
+    db.select({ id: schema.accounts.id }).from(schema.accounts).where(and(eq(schema.accounts.householdId, household.id), inArray(schema.accounts.type, [...KEPT_TYPES]))),
   ]);
+  // Deposits, loans and money lent are not the month's income or spending.
+  const keptIds = new Set(kept.map((k) => k.id));
+  const txs = all.filter((t) => !keptIds.has(t.accountId));
   const s = summarize(txs, categories);
   const budgetByCat = new Map(budgets.map((b) => [b.categoryId, b.amountMinor]));
   const tops = categories.filter((cat) => !cat.parentId && (cat.kind === "need" || cat.kind === "want"));

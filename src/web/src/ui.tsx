@@ -151,6 +151,7 @@ export const Icon = {
   build: ({ size = 17 }: IconProps) => svg(size, <><rect x="3" y="13" width="8" height="5" /><rect x="13" y="13" width="8" height="5" /><rect x="8" y="6" width="8" height="5" /></>),
   house: ({ size = 17 }: IconProps) => svg(size, <><path d="M4 18V9l8-5 8 5v9" /><path d="M9 18v-5h6v5" /></>),
   education: ({ size = 17 }: IconProps) => svg(size, <><path d="M2 9l10-4 10 4-10 4z" /><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5" /></>),
+  unlock: ({ size = 17 }: IconProps) => svg(size, <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 7.6-1.7" /></>),
   other: ({ size = 17 }: IconProps) => svg(size, <path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z" />),
 };
 

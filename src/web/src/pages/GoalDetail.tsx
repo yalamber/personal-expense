@@ -97,6 +97,17 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
             <div className="progress" aria-hidden="true">
               <div style={{ width: `${pct}%` }} />
             </div>
+            {goal.savedFrom === "accounts" && (
+              <div className="stack" style={{ gap: 4 }}>
+                <span className="small muted">Kept in {goal.accounts.length === 1 ? "this account" : "these accounts"}, so the saved figure is their balance today:</span>
+                {goal.accounts.map((a) => (
+                  <div key={a.id} className="kv small">
+                    <span>{a.name}{a.type === "deposit" ? " · fixed deposit" : ""}</span>
+                    <span className="mono">{formatMoney(a.balanceMinor, cur, { symbol: false })}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="card stack" aria-labelledby="parts-h">

@@ -12,6 +12,7 @@ import { Log } from "./Log";
 import { Members } from "./Members";
 import { NewGoal } from "./NewGoal";
 import { Plan } from "./Plan";
+import { StartingPoint } from "./StartingPoint";
 import { Today } from "./Today";
 
 /** Old addresses from the first version keep working. */
@@ -126,7 +127,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
         {household && sub === "/plan" && <Plan household={household} version={version} onChanged={changed} />}
         {household && sub === "/plan/new" && <NewGoal household={household} accounts={accounts} />}
         {household && goalMatch && <GoalDetail household={household} accounts={accounts} goalId={goalMatch[1]!} onChanged={changed} />}
-        {household && space === "decide" && <Decide household={household} categories={categories} version={version} onChanged={changed} />}
+        {household && space === "decide" && <Decide household={household} accounts={accounts} categories={categories} version={version} onChanged={changed} />}
         {household && sub === "/family" && <Family household={household} onLogout={onLogout} onChanged={changed} />}
         {household && sub === "/family/forwarding" && <Forwarding household={household} />}
         {household && sub.startsWith("/family/") && sub !== "/family/forwarding" && (
@@ -134,6 +135,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
             <a className="back" href={`${base}/family`} onClick={onLinkClick}>
               <Icon.back /> Family
             </a>
+            {sub === "/family/start" && <StartingPoint household={household} onChanged={changed} />}
             {sub === "/family/accounts" && <Accounts household={household} />}
             {sub === "/family/people" && <Members household={household} />}
             {sub === "/family/envelopes" && <Budgets household={household} />}

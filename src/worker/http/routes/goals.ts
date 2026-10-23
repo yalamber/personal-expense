@@ -3,13 +3,13 @@
  * made of (cost items or build stages), and the money that has gone in.
  */
 import { Hono } from "hono";
-import { and, asc, desc, eq, isNull, max } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { isDate, shiftMonth, todayIn } from "../../../shared/dates";
 import { parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
-import { loadGoals, monthlyBasis } from "../../ledger/overview";
+import { loadAccountViews, loadGoals, loanCommitments, monthlyBasis, spareAfter } from "../../ledger/overview";
 import { createTransfer, transactionValues } from "../../ledger/transactions";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
@@ -46,24 +46,36 @@ async function savingCategoryId(c: AppContext): Promise<string | null> {
   return (rows.find((r) => /goal/i.test(r.name)) ?? rows.find((r) => r.parentId) ?? rows[0])?.id ?? null;
 }
 
-goalRoutes.get("/goals", async (c) => c.json(await loadGoals(c.get("db"), c.get("household").id)));
+goalRoutes.get("/goals", async (c) => c.json(await loadGoals(c.get("db"), c.get("household").id, todayIn(c.get("household").timezone))));
 
 /** Everything the plan screen needs; the simulation itself runs in the browser so the lever is instant. */
 goalRoutes.get("/plan", async (c) => {
   const db = c.get("db");
   const household = c.get("household");
-  const month = todayIn(household.timezone).slice(0, 7);
-  const [goals, basis] = await Promise.all([loadGoals(db, household.id), monthlyBasis(db, household.id, month)]);
+  const today = todayIn(household.timezone);
+  const month = today.slice(0, 7);
+  const [goals, basis, accounts] = await Promise.all([loadGoals(db, household.id, today), monthlyBasis(db, household.id, month), loadAccountViews(db, household.id, today)]);
   const plannedMinor = goals.filter((g) => !g.completedAt).reduce((s, g) => s + g.monthlyPlanMinor, 0);
+  const loans = loanCommitments(accounts);
   return c.json({
     currency: household.currency,
     startMonth: shiftMonth(month, 1),
     goals,
     plannedMinor,
     basis,
-    spareMinor: basis.months ? basis.incomeMinor - basis.spendMinor - plannedMinor : null,
+    loans,
+    spareMinor: spareAfter(basis, plannedMinor, loans),
   });
 });
+
+/** An account chosen to hold a goal's money also counts toward it, unless it already serves another goal. */
+async function claimAccount(c: AppContext, accountId: string, goalId: string): Promise<void> {
+  await c
+    .get("db")
+    .update(schema.accounts)
+    .set({ goalId })
+    .where(and(eq(schema.accounts.id, accountId), eq(schema.accounts.householdId, c.get("household").id), isNull(schema.accounts.goalId)));
+}
 
 goalRoutes.post("/goals", requireWriter, async (c) => {
   const db = c.get("db");
@@ -126,6 +138,7 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
     );
   }
   await db.batch(statements as [BatchItem<"sqlite">, ...BatchItem<"sqlite">[]]);
+  if (body.linkedAccountId) await claimAccount(c, body.linkedAccountId, goalId);
   return c.json({ id: goalId }, 201);
 });
 
@@ -160,6 +173,7 @@ goalRoutes.patch("/goals/:goalId", requireWriter, async (c) => {
       if (!a) return c.json({ error: "account not found" }, 404);
     }
     patch.linkedAccountId = body.linkedAccountId || null;
+    if (body.linkedAccountId) await claimAccount(c, body.linkedAccountId, goal.id);
   }
   if (typeof body.completed === "boolean") patch.completedAt = body.completed ? nowIso() : null;
   if (Object.keys(patch).length) await c.get("db").update(schema.goals).set(patch).where(eq(schema.goals.id, goal.id));
@@ -179,7 +193,7 @@ goalRoutes.put("/goals/order", requireWriter, async (c) => {
   const db = c.get("db");
   const body = await readJson<{ ids?: string[] }>(c);
   const ids = Array.isArray(body.ids) ? body.ids.filter((x) => typeof x === "string") : [];
-  const goals = await loadGoals(db, c.get("household").id);
+  const goals = await loadGoals(db, c.get("household").id, todayIn(c.get("household").timezone));
   const known = new Set(goals.map((g) => g.id));
   if (!ids.length || ids.some((id) => !known.has(id))) return c.json({ error: "unknown goal in the order" }, 400);
   const rest = goals.map((g) => g.id).filter((id) => !ids.includes(id));
@@ -295,8 +309,15 @@ goalRoutes.post("/goals/:goalId/contributions", requireWriter, async (c) => {
   if (body.fromAccountId) {
     const from = await db.query.accounts.findFirst({ where: and(eq(schema.accounts.id, body.fromAccountId), eq(schema.accounts.householdId, household.id)), columns: { id: true } });
     if (!from) return c.json({ error: "account not found" }, 404);
-    if (goal.linkedAccountId && goal.linkedAccountId !== from.id) {
-      const t = await createTransfer(db, { householdId: household.id, fromAccountId: from.id, toAccountId: goal.linkedAccountId, amountMinor: amount, date, note, memberId, goalId: goal.id, description: `To ${goal.name}` });
+    // Money goes into the goal's own account: the one chosen for it, or one that holds its money
+    // and can take deposits (not a fixed deposit mid-term).
+    const holder = await db.query.accounts.findFirst({
+      where: and(eq(schema.accounts.householdId, household.id), eq(schema.accounts.goalId, goal.id), isNull(schema.accounts.closedAt), inArray(schema.accounts.type, ["savings", "checking", "cash", "wallet"])),
+      columns: { id: true },
+    });
+    const target = goal.linkedAccountId ?? holder?.id ?? null;
+    if (target && target !== from.id) {
+      const t = await createTransfer(db, { householdId: household.id, fromAccountId: from.id, toAccountId: target, amountMinor: amount, date, note, memberId, goalId: goal.id, description: `To ${goal.name}` });
       transactionId = t.outId;
     } else {
       const values = transactionValues({

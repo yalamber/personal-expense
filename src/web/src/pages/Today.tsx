@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { lateLabel, monthName } from "../../../shared/plan";
-import { api, ApiError, type Account, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
+import { api, ApiError, type Account, type AccountType, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
 import { onLinkClick } from "../router";
 import { CategorySelect, Checks, Icon, MonthSwitcher, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
+
+/** Accounts that get bank statements; deposits, loans and money lent are kept by the family. */
+const STATEMENT_TYPES: AccountType[] = ["checking", "savings", "credit", "wallet"];
 
 /** Today: one number that connects tonight's dinner to the land date, then the book itself. */
 export function Today({
@@ -98,12 +101,26 @@ export function Today({
             <dt>To the goals</dt>
             <dd>{formatMoney(data.goalsMinor, cur, { symbol: false })}</dd>
           </div>
+          {data.loansMinor > 0 && (
+            <div>
+              <dt>Loan installments</dt>
+              <dd>{formatMoney(data.loansMinor, cur, { symbol: false })}</dd>
+            </div>
+          )}
           <div>
             <dt>For everyday things</dt>
             <dd style={{ color: over ? "var(--rust)" : undefined }}>{formatMoney(data.everydayLeftMinor, cur, { symbol: false })}</dd>
           </div>
         </dl>
       </section>
+
+      {data.needsStart && canWrite && (
+        <a className="banner" href={`/h/${household.id}/family/start`} onClick={onLinkClick}>
+          <Icon.plus />
+          <span style={{ flex: "1 1 auto" }}>Start from today: add your balances, fixed deposits and loans, and the numbers are right from day one.</span>
+          <Icon.next />
+        </a>
+      )}
 
       {data.decideCount > 0 && (
         <a className="banner" href={`/h/${household.id}/decide`} onClick={onLinkClick}>
@@ -195,12 +212,45 @@ export function Today({
             })}
           </section>
 
+          {!data.needsStart && (
+            <section className="card stack" aria-labelledby="worth-h" style={{ gap: 6 }}>
+              <div className="row between">
+                <h2 id="worth-h">What we have</h2>
+                <a className="small" href={`/h/${household.id}/family/accounts`} onClick={onLinkClick}>
+                  Accounts
+                </a>
+              </div>
+              <span className="display" style={{ fontSize: 26 }}>{formatMoney(data.worth.netMinor, cur)}</span>
+              <div className="kv small">
+                <span className="muted">Held, FDs included</span>
+                <span className="mono">{formatMoney(data.worth.haveMinor, cur, { symbol: false })}</span>
+              </div>
+              {data.worth.oweMinor !== 0 && (
+                <div className="kv small">
+                  <span className="muted">Owed on loans and cards</span>
+                  <span className="mono" style={{ color: "var(--rust)" }}>−{formatMoney(data.worth.oweMinor, cur, { symbol: false })}</span>
+                </div>
+              )}
+              {data.worth.accruedMinor > 0 && (
+                <div className="kv small">
+                  <span className="muted">FD interest earned so far</span>
+                  <span className="mono amount-in">+{formatMoney(data.worth.accruedMinor, cur, { symbol: false })}</span>
+                </div>
+              )}
+            </section>
+          )}
+
           <section className="card" aria-labelledby="bank-h">
             <h2 id="bank-h" style={{ marginBottom: 6 }}>The bank and the book</h2>
             {accounts.length === 0 && <span className="small muted">No accounts yet.</span>}
-            {data.bank.map((b) => (
+            {data.bank.filter((b) => STATEMENT_TYPES.includes(b.type)).map((b) => (
               <div key={b.accountId} className="kv">
-                <span>{b.name}</span>
+                <span className="stack" style={{ gap: 0 }}>
+                  {b.name}
+                  <span className="small muted mono">
+                    {b.type === "credit" ? `${formatMoney(-b.balanceMinor, cur, { symbol: false })} owed` : formatMoney(b.balanceMinor, cur, { symbol: false })}
+                  </span>
+                </span>
                 {b.questions > 0 ? (
                   <a href={`/h/${household.id}/decide`} onClick={onLinkClick} style={{ fontWeight: 600, color: "var(--marigold-deep)" }}>
                     Balance question
