@@ -3,6 +3,7 @@ import { todayIn } from "../../../shared/dates";
 import { lateLabel, monthName, simulatePlan } from "../../../shared/plan";
 import { api, ApiError, type Account, type Contribution, type Goal, type Household, type PlanData } from "../api";
 import { navigate, onLinkClick } from "../router";
+import { PageSkeleton } from "../skeleton";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 import { toPlanGoals } from "./Plan";
 
@@ -53,7 +54,7 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
   }
 
   if (error && !plan) return <div className="error">{error}</div>;
-  if (!plan) return <p className="muted">Opening the goal…</p>;
+  if (!plan) return <PageSkeleton kind="list" />;
   if (!goal) {
     return (
       <div className="stack">

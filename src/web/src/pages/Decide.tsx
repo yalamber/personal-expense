@@ -3,6 +3,7 @@ import { monthName } from "../../../shared/plan";
 import { todayIn } from "../../../shared/dates";
 import { api, ApiError, type Account, type Category, type DecideCard, type Household } from "../api";
 import { onLinkClick } from "../router";
+import { PageSkeleton } from "../skeleton";
 import { CategorySelect, Checks, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
 
 /**
@@ -54,7 +55,7 @@ export function Decide({ household, accounts, categories, version, onChanged }: 
   }
 
   if (error && !cards) return <div className="error">{error}</div>;
-  if (!cards) return <p className="muted">Gathering what needs a look…</p>;
+  if (!cards) return <PageSkeleton kind="decide" />;
 
   const card = cards[idx];
   const total = cards.length;

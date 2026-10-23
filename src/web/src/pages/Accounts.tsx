@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { todayIn } from "../../../shared/dates";
 import { daysBetween } from "../../../shared/deposit";
 import { Meter } from "../charts";
 import { worth } from "../../../shared/worth";
-import { api, ApiError, type Account, type Goal, type Household } from "../api";
+import { api, ApiError, paths, type Account, type Goal, type Household } from "../api";
+import { useQuery } from "../query";
+import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Icon, formatMoney, shortDate } from "../ui";
 import { AccountAmount, AccountForm, GROUPS, MaturityForm, RepaymentForm, accountLine, typeInfo } from "./accountsKit";
@@ -63,9 +65,11 @@ function BalanceCheck({ household, account, onDone }: { household: Household; ac
 type Panel = "edit" | "check" | "repay" | "mature" | "csv" | null;
 
 /** Accounts: where the money is and what is owed, grouped, with today's balances. */
-export function Accounts({ household }: { household: Household }) {
-  const [rows, setRows] = useState<Account[] | null>(null);
-  const [goals, setGoals] = useState<Goal[]>([]);
+export function Accounts({ household, version, onChanged }: { household: Household; version: number; onChanged: () => void }) {
+  const aq = useQuery<Account[]>(paths.accounts(household.id), [version]);
+  const gq = useQuery<Goal[]>(paths.goals(household.id), [version]);
+  const rows = aq.data ?? null;
+  const goals = (gq.data ?? []).filter((x) => !x.completedAt);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<{ id: string; panel: Panel } | null>(null);
@@ -73,18 +77,6 @@ export function Accounts({ household }: { household: Household }) {
   const canWrite = household.me.role !== "viewer";
   const cur = household.currency;
 
-  const load = useCallback(async () => {
-    try {
-      const [a, g] = await Promise.all([api.accounts(household.id), api.goals(household.id)]);
-      setRows(a);
-      setGoals(g.filter((x) => !x.completedAt));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load accounts");
-    }
-  }, [household.id]);
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const live = (rows ?? []).filter((a) => !a.closedAt);
   const closed = (rows ?? []).filter((a) => a.closedAt && a.type !== "person");
@@ -96,7 +88,7 @@ export function Accounts({ household }: { household: Household }) {
     if (!window.confirm(`Close ${a.name}? Its history stays; it leaves the totals.`)) return;
     try {
       await api.closeAccount(household.id, a.id, {});
-      await load();
+      onChanged();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not close it");
     }
@@ -105,7 +97,7 @@ export function Accounts({ household }: { household: Household }) {
   async function reopen(a: Account) {
     try {
       await api.updateAccount(household.id, a.id, { closed: false });
-      await load();
+      onChanged();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not reopen it");
     }
@@ -124,7 +116,8 @@ export function Accounts({ household }: { household: Household }) {
           </button>
         )}
       </div>
-      {error && <div className="error">{error}</div>}
+      {(error ?? aq.error) && <div className="error">{error ?? aq.error}</div>}
+      {!rows && !aq.error && <PageSkeleton kind="list" />}
 
       {live.length > 0 && (
         <dl className="ledger-sum" style={{ maxWidth: 520 }}>
@@ -164,7 +157,7 @@ export function Accounts({ household }: { household: Household }) {
           onCancel={() => setAdding(false)}
           onSaved={() => {
             setAdding(false);
-            void load();
+            onChanged();
           }}
         />
       )}
@@ -240,11 +233,11 @@ export function Accounts({ household }: { household: Household }) {
                 )}
                 {open?.id === a.id && (
                   <div style={{ marginTop: 8 }}>
-                    {open.panel === "edit" && <AccountForm household={household} accounts={rows ?? []} goals={goals} initial={a} onCancel={() => setOpen(null)} onSaved={() => { setOpen(null); void load(); }} />}
-                    {open.panel === "check" && <BalanceCheck household={household} account={a} onDone={() => void load()} />}
-                    {open.panel === "repay" && <RepaymentForm household={household} account={a} accounts={rows ?? []} onDone={() => void load()} />}
-                    {open.panel === "mature" && <MaturityForm household={household} account={a} accounts={rows ?? []} onDone={() => { setOpen(null); void load(); }} />}
-                    {open.panel === "csv" && <CsvImport household={household} account={a} onCancel={() => setOpen(null)} onDone={() => { setOpen(null); void load(); }} />}
+                    {open.panel === "edit" && <AccountForm household={household} accounts={rows ?? []} goals={goals} initial={a} onCancel={() => setOpen(null)} onSaved={() => { setOpen(null); onChanged(); }} />}
+                    {open.panel === "check" && <BalanceCheck household={household} account={a} onDone={() => onChanged()} />}
+                    {open.panel === "repay" && <RepaymentForm household={household} account={a} accounts={rows ?? []} onDone={() => onChanged()} />}
+                    {open.panel === "mature" && <MaturityForm household={household} account={a} accounts={rows ?? []} onDone={() => { setOpen(null); onChanged(); }} />}
+                    {open.panel === "csv" && <CsvImport household={household} account={a} onCancel={() => setOpen(null)} onDone={() => { setOpen(null); onChanged(); }} />}
                   </div>
                 )}
               </div>

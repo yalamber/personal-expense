@@ -1,12 +1,126 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { monthRange, todayIn } from "../../../shared/dates";
 import { api, ApiError, type Household, type Statement } from "../api";
 import { onLinkClick } from "../router";
+import { useInstall } from "../pwa";
 import { Icon } from "../ui";
 
-/** Settings: the people, the accounts and the plumbing that keeps the book filling itself. */
-export function Settings({ household, onLogout, onChanged }: { household: Household; onLogout: () => void; onChanged: () => void }) {
+/**
+ * Settings: the people, the accounts and the plumbing that keeps the book filling itself. On a
+ * wide screen a menu sits on the left with the chosen section beside it; on a phone the menu is
+ * the page, and each section opens with a way back.
+ */
+
+export type SettingsSection = "household" | "people" | "start" | "accounts" | "envelopes" | "forwarding" | "inbox" | "app";
+
+export const SETTINGS_MENU: { group: string; items: { id: SettingsSection; title: string; text: string }[] }[] = [
+  {
+    group: "Household",
+    items: [
+      { id: "household", title: "Household", text: "Payday, your data, signing out" },
+      { id: "people", title: "People", text: "Who can see and log money, and who can only look" },
+    ],
+  },
+  {
+    group: "Money",
+    items: [
+      { id: "start", title: "Starting point", text: "Today's balances, fixed deposits, loans and a usual month" },
+      { id: "accounts", title: "Accounts", text: "Bank, savings, FDs, loans and cards" },
+      { id: "envelopes", title: "Envelopes", text: "Monthly amounts for the categories you want to watch" },
+    ],
+  },
+  {
+    group: "Statements",
+    items: [
+      { id: "forwarding", title: "Statements by email", text: "Your forwarding address, Gmail setup and confirmation codes" },
+      { id: "inbox", title: "Inbox", text: "Every email and file that has arrived, and what happened to it" },
+    ],
+  },
+  {
+    group: "This phone",
+    items: [{ id: "app", title: "The app", text: "On the home screen, without a signal, updates" }],
+  },
+];
+
+const SECTIONS = new Set<string>(SETTINGS_MENU.flatMap((g) => g.items.map((i) => i.id)));
+
+/** The section a /settings path points at, or null for the menu itself. */
+export function sectionOf(sub: string): SettingsSection | null {
+  const rest = sub.startsWith("/settings/") ? sub.slice("/settings/".length) : "";
+  return SECTIONS.has(rest) ? (rest as SettingsSection) : null;
+}
+
+/** True on a phone-sized screen, where the menu and a section cannot share the width. */
+export function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 760px)");
+    const fn = () => setNarrow(mq.matches);
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
+  }, []);
+  return narrow;
+}
+
+export function SettingsLayout({ household, section, narrow, children }: { household: Household; section: SettingsSection | null; narrow: boolean; children: ReactNode }) {
   const base = `/h/${household.id}/settings`;
+  if (narrow && !section) {
+    return (
+      <>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="eyebrow">{household.name}</span>
+          <h1>Settings</h1>
+        </div>
+        {SETTINGS_MENU.map((g) => (
+          <section key={g.group} className="card settings-menu" aria-labelledby={`sg-${g.group}`}>
+            <h2 id={`sg-${g.group}`} className="eyebrow">
+              {g.group}
+            </h2>
+            {g.items.map((i) => (
+              <a key={i.id} href={`${base}/${i.id}`} onClick={onLinkClick}>
+                <span className="stack" style={{ gap: 1, minWidth: 0 }}>
+                  <strong>{i.title}</strong>
+                  <span className="small muted">{i.text}</span>
+                </span>
+                <Icon.next />
+              </a>
+            ))}
+          </section>
+        ))}
+      </>
+    );
+  }
+  if (narrow) {
+    return (
+      <>
+        <a className="back" href={base} onClick={onLinkClick}>
+          <Icon.back /> Settings
+        </a>
+        {children}
+      </>
+    );
+  }
+  return (
+    <div className="settings">
+      <nav className="settings-nav" aria-label="Settings sections">
+        {SETTINGS_MENU.map((g) => (
+          <div key={g.group} className="group">
+            <span className="eyebrow">{g.group}</span>
+            {g.items.map((i) => (
+              <a key={i.id} href={`${base}/${i.id}`} aria-current={section === i.id ? "page" : undefined} onClick={onLinkClick}>
+                {i.title}
+              </a>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="settings-body">{children}</div>
+    </div>
+  );
+}
+
+/** The household itself: payday, the data, signing out. */
+export function HouseholdSettings({ household, onLogout, onChanged }: { household: Household; onLogout: () => void; onChanged: () => void }) {
   const isAdmin = household.me.role === "admin";
   const [payDay, setPayDay] = useState(household.monthStartDay);
   const [notice, setNotice] = useState<string | null>(null);
@@ -25,35 +139,19 @@ export function Settings({ household, onLogout, onChanged }: { household: Househ
     }
   }
 
-  const links = [
-    { href: `${base}/forwarding`, title: "Statements by email", text: "Your forwarding address, Gmail setup and confirmation codes." },
-    { href: `${base}/start`, title: "Starting point", text: "Today's balances, fixed deposits, loans and a usual month, so the numbers are right from day one." },
-    { href: `${base}/accounts`, title: "Accounts", text: "Bank, savings, FDs, loans and cards: balances, payments, maturities, statement senders and CSV imports." },
-    { href: `${base}/people`, title: "People", text: "Who can see and log money, and who can only look." },
-    { href: `${base}/envelopes`, title: "Envelopes", text: "Monthly amounts for the categories you want to watch." },
-    { href: `${base}/inbox`, title: "Inbox", text: "Every email and file that has arrived, and what happened to it." },
-  ];
-
   return (
     <>
       <div className="stack" style={{ gap: 4 }}>
-        <span className="eyebrow">{household.name}</span>
-        <h1>Settings</h1>
+        <span className="eyebrow">Household</span>
+        <h1>{household.name}</h1>
+        <span className="muted">
+          {household.currency} · {household.timezone} · you are {household.me.name}, {household.me.role === "admin" ? "an admin" : household.me.role === "member" ? "a member" : "a viewer"}
+        </span>
       </div>
-      <div className="hub">
-        {links.map((l) => (
-          <a key={l.href} className="card" href={l.href} onClick={onLinkClick}>
-            <strong className="row between" style={{ flexWrap: "nowrap" }}>
-              {l.title} <Icon.next />
-            </strong>
-            <span className="small muted">{l.text}</span>
-          </a>
-        ))}
-      </div>
-      <section className="card stack" aria-labelledby="settings-h">
-        <h2 id="settings-h">Household</h2>
+      <section className="card stack" aria-labelledby="pay-h">
+        <h2 id="pay-h">Payday</h2>
         <label style={{ maxWidth: 320 }}>
-          Payday, the day salary usually arrives
+          The day salary usually arrives
           <select value={payDay} disabled={!isAdmin} onChange={(e) => savePayDay(Number(e.target.value))}>
             {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
               <option key={d} value={d}>
@@ -62,13 +160,23 @@ export function Settings({ household, onLogout, onChanged }: { household: Househ
             ))}
           </select>
         </label>
-        <span className="small muted">Today's "a day" number counts the days until then.</span>
+        <span className="small muted">Today's "a day" number counts the days until then.{isAdmin ? "" : " Only an admin can change it."}</span>
         {notice && <div className="ok">{notice}</div>}
         {error && <div className="error">{error}</div>}
+      </section>
+      <section className="card stack" aria-labelledby="data-h">
+        <h2 id="data-h">Your data</h2>
+        <span className="small muted">A CSV of this month's book, for a spreadsheet or for safekeeping.</span>
         <div className="row">
           <a className="button secondary" href={api.exportUrl(household.id, from, to)} download>
             Export this month as CSV
           </a>
+        </div>
+      </section>
+      <section className="card stack" aria-labelledby="out-h">
+        <h2 id="out-h">Signing out</h2>
+        <span className="small muted">Signing out clears what this phone keeps of the book. Entries not yet synced would be lost, so the app asks first.</span>
+        <div className="row">
           <button type="button" className="secondary signout-inline" onClick={onLogout}>
             Sign out
           </button>
@@ -81,6 +189,74 @@ export function Settings({ household, onLogout, onChanged }: { household: Househ
 function ordinal(n: number): string {
   const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : n % 10 === 1 ? "st" : n % 10 === 2 ? "nd" : n % 10 === 3 ? "rd" : "th";
   return `${n}${s}`;
+}
+
+/** The app on this phone: the home screen, no signal, updates. */
+export function AppSettings() {
+  const { canInstall, standalone, ios, install } = useInstall();
+  const [checked, setChecked] = useState<string | null>(null);
+
+  async function checkForUpdate() {
+    setChecked("Checking…");
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      await reg?.update();
+      setChecked("Checked. When a new version is found, a bar at the top offers a reload.");
+    } catch {
+      setChecked("Could not check right now.");
+    }
+  }
+
+  return (
+    <>
+      <div className="stack" style={{ gap: 4 }}>
+        <span className="eyebrow">This phone</span>
+        <h1>The app</h1>
+      </div>
+      <section className="card stack" aria-labelledby="install-h">
+        <h2 id="install-h">On the home screen</h2>
+        {standalone ? (
+          <span className="ok">Installed. It opens full screen from the home screen.</span>
+        ) : (
+          <>
+            <span className="small muted">Installed, the app opens from the home screen like any other, full screen, and works without a signal.</span>
+            {canInstall ? (
+              <div>
+                <button type="button" onClick={() => void install()}>
+                  Add to Home Screen
+                </button>
+              </div>
+            ) : ios ? (
+              <span className="small">
+                In Safari, tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.
+              </span>
+            ) : (
+              <span className="small">
+                In your browser's menu, choose <strong>Install app</strong> or <strong>Add to Home Screen</strong>.
+              </span>
+            )}
+          </>
+        )}
+      </section>
+      <section className="card stack" aria-labelledby="offline-h">
+        <h2 id="offline-h">Without a signal</h2>
+        <span className="small muted">
+          The app keeps the last figures it saw and opens with them. Money logged, moved or paid while offline waits on this phone and goes into the book when the
+          connection returns; the bar under the header says what is happening.
+        </span>
+      </section>
+      <section className="card stack" aria-labelledby="update-h">
+        <h2 id="update-h">Updates</h2>
+        <span className="small muted">New versions arrive on their own when the app is opened with a connection. A bar at the top offers a reload when one is ready.</span>
+        <div className="row" style={{ alignItems: "center" }}>
+          <button type="button" className="secondary" onClick={() => void checkForUpdate()}>
+            Check now
+          </button>
+          {checked && <span className="small muted">{checked}</span>}
+        </div>
+      </section>
+    </>
+  );
 }
 
 /** Statements by email: the address, how to point Gmail at it, and any confirmation codes waiting. */
@@ -100,10 +276,8 @@ export function Forwarding({ household }: { household: Household }) {
 
   return (
     <>
-      <a className="back" href={`/h/${household.id}/settings`} onClick={onLinkClick}>
-        <Icon.back /> Settings
-      </a>
       <div className="stack" style={{ gap: 6 }}>
+        <span className="eyebrow">Statements</span>
         <h1>Statements by email</h1>
         <p className="muted" style={{ margin: 0, maxWidth: 640 }}>
           Bank alerts and statements sent here are read into the book and checked against what the family logged. Only the odd ones ask for you in Decide.

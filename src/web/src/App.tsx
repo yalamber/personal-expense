@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Me } from "./api";
+import { api, ApiError, paths, type Me } from "./api";
 import { clearOutbox, getOfflineState } from "./offline";
+import { clearQueries, seed, setCached } from "./query";
+import { AppSkeleton } from "./skeleton";
 import { Login } from "./pages/Login";
 import { NewHousehold } from "./pages/NewHousehold";
 import { Shell } from "./pages/Shell";
@@ -13,12 +15,15 @@ export function App() {
   const [session, setSession] = useState<Session>({ state: "loading" });
 
   const reload = useCallback(async () => {
+    // What the phone knows opens the app at once; the network then confirms or signs out.
+    const known = await seed<Me>(paths.me);
+    if (known) setSession({ state: "ready", me: known });
     try {
       const me = await api.me();
+      setCached(paths.me, me);
       setSession({ state: "ready", me });
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) setSession({ state: "anonymous" });
-      else setSession({ state: "anonymous" });
+      if (!known || (err instanceof ApiError && err.status === 401)) setSession({ state: "anonymous" });
     }
   }, []);
 
@@ -26,7 +31,7 @@ export function App() {
     void reload();
   }, [reload]);
 
-  if (session.state === "loading") return <main className="auth muted">Loading…</main>;
+  if (session.state === "loading") return <AppSkeleton />;
 
   if (session.state === "anonymous") {
     return <Login />;
@@ -50,7 +55,10 @@ export function App() {
   const match = path.match(/^\/h\/([^/]+)(\/.*)?$/);
   const householdId = match?.[1] ?? first.householdId;
   const sub = match?.[2] ?? "/";
-  if (!match) navigate(`/h/${householdId}`);
+  // The home-screen shortcuts land on "/" with a hint of where to go.
+  const hint = new URLSearchParams(window.location.search);
+  if (hint.get("go") === "khata") navigate(`/h/${householdId}/khata`);
+  else if (!match) navigate(`/h/${householdId}${window.location.search}`);
 
   return (
     <Shell
@@ -69,6 +77,7 @@ export function App() {
           }
         }
         clearOutbox();
+        clearQueries();
         navigator.serviceWorker?.controller?.postMessage({ type: "clear-api" });
         setSession({ state: "anonymous" });
         navigate("/");

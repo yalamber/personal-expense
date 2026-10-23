@@ -379,6 +379,25 @@ export type NewGoalBody = {
 
 const h = (id: string) => `/api/households/${id}`;
 
+/** The API's reads by path, for the page cache (useQuery) and the api functions alike. */
+export const paths = {
+  me: "/api/me",
+  household: (id: string) => h(id),
+  members: (id: string) => `${h(id)}/members`,
+  accounts: (id: string) => `${h(id)}/accounts`,
+  entries: (id: string, accountId: string) => `${h(id)}/accounts/${accountId}/entries`,
+  categories: (id: string) => `${h(id)}/categories`,
+  transactions: (id: string, month: string) => `${h(id)}/transactions?month=${month}`,
+  months: (id: string, count = 6) => `${h(id)}/months?count=${count}`,
+  today: (id: string) => `${h(id)}/today`,
+  decide: (id: string) => `${h(id)}/decide`,
+  plan: (id: string) => `${h(id)}/plan`,
+  goals: (id: string) => `${h(id)}/goals`,
+  contributions: (id: string, goalId: string) => `${h(id)}/goals/${goalId}/contributions`,
+};
+
+export const get = <T,>(path: string) => request<T>("GET", path);
+
 export const api = {
   requestMagicLink: (email: string) => request<{ ok: true }>("POST", "/api/auth/magic-link", { email }),
   logout: () => request<{ ok: true }>("POST", "/api/auth/logout"),

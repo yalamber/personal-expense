@@ -78,7 +78,13 @@ backfill.
 The app is a PWA that works without a connection:
 
 - **The shell**: a service worker (`src/web/sw.js`, stamped per build by `vite.config.ts`)
-  caches the built app, so it opens with no signal and can be installed to the home screen.
+  caches the built app, so it opens with no signal and can be installed to the home screen
+  (Settings › On your phone offers the browser's install prompt; the manifest has shortcuts for
+  Log money and Khata). A new build shows "A new version is ready" with a reload.
+- **First paint**: every read is kept in a page cache (`src/web/src/query.ts`), so a page seen
+  before paints at once and refreshes quietly; on a cold start the worker's store seeds it. Pages
+  that have nothing yet show a skeleton in their own shape (`src/web/src/skeleton.tsx`), never a
+  spinner. Fonts load without blocking the first paint.
 - **Reading**: API reads are kept after each fetch and served when the network is down or slow,
   marked with when they were saved. The bar under the header says "Offline. Showing what was
   saved at 14:02."

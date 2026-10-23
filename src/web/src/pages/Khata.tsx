@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { todayIn } from "../../../shared/dates";
 import { monthName } from "../../../shared/plan";
-import { api, ApiError, isQueued, QUEUED_NOTE, type Account, type Category, type ContactEntry, type ContactEntryBody, type ContactLedger, type Household } from "../api";
+import { api, ApiError, isQueued, paths, QUEUED_NOTE, type Account, type Category, type ContactEntry, type ContactEntryBody, type ContactLedger, type Household } from "../api";
+import { useQuery } from "../query";
+import { PageSkeleton } from "../skeleton";
 import { navigate, onLinkClick } from "../router";
 import { CategorySelect, Icon, Sheet, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
 import { Pending } from "./Pending";
@@ -39,28 +41,18 @@ function balanceLine(balance: number, cur: string): string {
 // The list
 // ---------------------------------------------------------------------------
 
-export function Khata({ household, onChanged }: { household: Household; onChanged: () => void }) {
+export function Khata({ household, version, onChanged }: { household: Household; version: number; onChanged: () => void }) {
   const cur = household.currency;
   const canWrite = household.me.role !== "viewer";
-  const [rows, setRows] = useState<Account[] | null>(null);
+  const aq = useQuery<Account[]>(paths.accounts(household.id), [version]);
+  const rows = aq.data ? aq.data.filter((a) => a.type === "person" && !a.closedAt) : null;
+  const error = aq.error;
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
   const [showSettled, setShowSettled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setRows((await api.accounts(household.id)).filter((a) => a.type === "person" && !a.closedAt));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the khata");
-    }
-  }, [household.id]);
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   if (error && !rows) return <div className="error">{error}</div>;
-  if (!rows) return <p className="muted">Opening the khata…</p>;
+  if (!rows) return <PageSkeleton kind="khata" />;
 
   const q = query.trim().toLowerCase();
   const matches = (a: Account) => !q || a.name.toLowerCase().includes(q) || (a.phone ?? "").includes(q) || (a.note ?? "").toLowerCase().includes(q);
@@ -228,33 +220,21 @@ export function Khata({ household, onChanged }: { household: Household; onChange
 
 const SHOWN = 30;
 
-export function KhataPage({ household, contactId, categories, onChanged }: { household: Household; contactId: string; categories: Category[]; onChanged: () => void }) {
+export function KhataPage({ household, contactId, categories, version, onChanged }: { household: Household; contactId: string; categories: Category[]; version: number; onChanged: () => void }) {
   const cur = household.currency;
   const canWrite = household.me.role !== "viewer";
-  const [contact, setContact] = useState<Account | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [ledger, setLedger] = useState<ContactLedger | null>(null);
+  const aq = useQuery<Account[]>(paths.accounts(household.id), [version]);
+  const lq = useQuery<ContactLedger>(paths.entries(household.id, contactId), [version]);
+  const contact = aq.data?.find((a) => a.id === contactId) ?? null;
+  const accounts = (aq.data ?? []).filter((a) => !a.closedAt && ["checking", "savings", "cash", "wallet", "credit"].includes(a.type));
+  const ledger = lq.data ?? null;
   const [sheet, setSheet] = useState<{ kind: ContactEntryBody["kind"]; amount?: string } | "edit" | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const [all, l] = await Promise.all([api.accounts(household.id), api.entries(household.id, contactId)]);
-      setContact(all.find((a) => a.id === contactId) ?? null);
-      setAccounts(all.filter((a) => !a.closedAt && ["checking", "savings", "cash", "wallet", "credit"].includes(a.type)));
-      setLedger(l);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the khata");
-    }
-  }, [household.id, contactId]);
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (error && !ledger) return <div className="error">{error}</div>;
-  if (!ledger || !contact) return <p className="muted">Opening the book…</p>;
+  if (lq.error && !ledger) return <div className="error">{lq.error}</div>;
+  if (!ledger || !contact) return <PageSkeleton kind="khata" />;
 
   const balance = ledger.balanceMinor;
   const side = sideOf(balance);
@@ -279,7 +259,6 @@ export function KhataPage({ household, contactId, categories, onChanged }: { hou
     setError(null);
     try {
       await api.voidTransaction(household.id, e.id);
-      await load();
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not remove it");
@@ -460,7 +439,6 @@ export function KhataPage({ household, contactId, categories, onChanged }: { hou
           onSaved={(message) => {
             setSheet(null);
             setNotice(message);
-            void load();
             onChanged();
           }}
         />
@@ -472,7 +450,6 @@ export function KhataPage({ household, contactId, categories, onChanged }: { hou
           onClose={() => setSheet(null)}
           onSaved={() => {
             setSheet(null);
-            void load();
             onChanged();
           }}
         />

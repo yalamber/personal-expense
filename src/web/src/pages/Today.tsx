@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { addDays, monthRange } from "../../../shared/dates";
 import { daysBetween } from "../../../shared/deposit";
 import { lateLabel, monthName } from "../../../shared/plan";
 import { spendOf, summarize } from "../../../shared/summary";
 import { Bars, Lines, Meter, SERIES } from "../charts";
-import { api, ApiError, type Account, type AccountType, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
+import { api, ApiError, paths, type Account, type AccountType, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
+import { useQuery } from "../query";
+import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Pending } from "./Pending";
 import { CategorySelect, Checks, Icon, MonthSwitcher, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
@@ -30,32 +32,19 @@ export function Today({
   onChanged: () => void;
   onLog: () => void;
 }) {
-  const [data, setData] = useState<TodayData | null>(null);
   const [month, setMonth] = useState<string | null>(null);
-  const [txs, setTxs] = useState<Transaction[] | null>(null);
-  const [months, setMonths] = useState<{ month: string; incomeMinor: number; spentMinor: number; savedMinor: number }[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const cur = household.currency;
   const canWrite = household.me.role !== "viewer";
-
-  const load = useCallback(async () => {
-    try {
-      const t = await api.today(household.id);
-      setData(t);
-      const m = month ?? t.month;
-      if (!month) setMonth(m);
-      setTxs(await api.transactions(household.id, m));
-      api.months(household.id, 6).then(setMonths).catch(() => undefined);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load today");
-    }
-  }, [household.id, month]);
-
-  useEffect(() => {
-    void load();
-  }, [load, version]);
+  const tq = useQuery<TodayData>(paths.today(household.id), [version]);
+  const data = tq.data ?? null;
+  const monthKey = month ?? data?.month ?? null;
+  const xq = useQuery<Transaction[]>(monthKey ? paths.transactions(household.id, monthKey) : null, [version]);
+  const txs = xq.data ?? null;
+  const mq = useQuery<{ month: string; incomeMinor: number; spentMinor: number; savedMinor: number }[]>(paths.months(household.id, 6), [version]);
+  const months = mq.data ?? [];
+  const error = tq.error;
 
   const byDay = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -64,7 +53,7 @@ export function Today({
   }, [txs, all]);
 
   if (error) return <div className="error">{error}</div>;
-  if (!data) return <p className="muted">Opening the book…</p>;
+  if (!data) return <PageSkeleton kind="today" />;
 
   const weekday = new Date(`${data.today}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
   const nothingYet = data.incomeMinor === 0 && data.spentMinor === 0;
@@ -220,10 +209,7 @@ export function Today({
                     open={open === t.id}
                     canEdit={canWrite && !(t.isPersonal && t.paidByMemberId !== household.me.id)}
                     onToggle={() => setOpen(open === t.id ? null : t.id)}
-                    onChanged={() => {
-                      void load();
-                      onChanged();
-                    }}
+                    onChanged={onChanged}
                   />
                 ))}
               </div>

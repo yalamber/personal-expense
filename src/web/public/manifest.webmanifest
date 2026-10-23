@@ -1,15 +1,22 @@
 {
+  "id": "/",
   "name": "Family Money",
   "short_name": "Money",
   "description": "The family's passbook: today, the plan, the khata. Works without a connection.",
+  "lang": "en",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#F4F0E6",
   "theme_color": "#2E5D4B",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Log money", "short_name": "Log", "url": "/?log=1", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Khata", "url": "/?go=khata", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

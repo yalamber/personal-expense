@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { lateLabel, monthName, simulatePlan, spanLabel, type GoalOutcome, type PlanGoal } from "../../../shared/plan";
 import { minorDigits, parseAmountToMinor } from "../../../shared/money";
 import { rateLabel } from "../../../shared/deposit";
 import { worth } from "../../../shared/worth";
-import { api, ApiError, type Account, type Goal, type Household, type PlanData } from "../api";
+import { api, ApiError, paths, type Account, type Goal, type Household, type PlanData } from "../api";
+import { useQuery } from "../query";
+import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 import { Lines, Meter, SERIES, Stacked, compact } from "../charts";
@@ -36,8 +38,10 @@ const KIND_ICON = { safety: Icon.safety, purchase: Icon.purchase, build: Icon.bu
 
 /** Plan: the goals as one road, in the order they are funded, with one lever — money per month. */
 export function Plan({ household, version, onChanged }: { household: Household; version: number; onChanged: () => void }) {
-  const [data, setData] = useState<PlanData | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const pq = useQuery<PlanData>(paths.plan(household.id), [version]);
+  const aq = useQuery<Account[]>(paths.accounts(household.id), [version]);
+  const data = pq.data ?? null;
+  const accounts = useMemo(() => (aq.data ?? []).filter((x) => !x.closedAt), [aq.data]);
   const [withReleases, setWithReleases] = useState(true);
   const [pool, setPool] = useState<number | null>(null);
   const [custom, setCustom] = useState("");
@@ -47,20 +51,8 @@ export function Plan({ household, version, onChanged }: { household: Household; 
   const cur = household.currency;
   const canWrite = household.me.role !== "viewer";
 
-  const load = useCallback(async () => {
-    try {
-      const [d, a] = await Promise.all([api.plan(household.id), api.accounts(household.id)]);
-      setData(d);
-      setAccounts(a.filter((x) => !x.closedAt));
-      setPool(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the plan");
-    }
-  }, [household.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load, version]);
+  // A fresh plan from the server puts the lever back where the plan is.
+  useEffect(() => setPool(null), [data]);
 
   const goals = useMemo(() => (data ? toPlanGoals(data.goals) : []), [data]);
   const current = data?.plannedMinor ?? 0;
@@ -71,8 +63,8 @@ export function Plan({ household, version, onChanged }: { household: Household; 
     [data, goals, amount, rise, releases],
   );
 
-  if (error && !data) return <div className="error">{error}</div>;
-  if (!data) return <p className="muted">Drawing the road…</p>;
+  if (pq.error && !data) return <div className="error">{pq.error}</div>;
+  if (!data) return <PageSkeleton kind="plan" />;
 
   const spare = data.spareMinor;
   const options = [current];
@@ -87,7 +79,6 @@ export function Plan({ household, version, onChanged }: { household: Household; 
     setBusy(true);
     try {
       await api.updateGoal(household.id, goal.id, { monthly: amountInput(goal.monthlyPlanMinor + sim.extraMinor, cur) });
-      await load();
       onChanged();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not change the plan");
@@ -104,7 +95,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
     [ids[i], ids[j]] = [ids[j]!, ids[i]!];
     try {
       await api.orderGoals(household.id, ids);
-      await load();
+      onChanged();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not reorder");
     }
