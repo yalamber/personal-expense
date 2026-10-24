@@ -615,6 +615,15 @@ function ContactSheet({ household, initial, onClose, onSaved }: { household: Hou
           Name
           <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Ram Kirana, Hari dai, the tenant" />
         </label>
+        {!initial && (
+          <span className="small muted">
+            A running tab with a shop, or money between people. A bank loan or an EMI belongs in{" "}
+            <a href={`/h/${household.id}/settings/accounts`} onClick={(e) => { onClose(); onLinkClick(e); }}>
+              Accounts
+            </a>{" "}
+            as a loan, so its installments are known.
+          </span>
+        )}
         <div className="row" style={{ alignItems: "flex-end" }}>
           <label style={{ flex: "1 1 150px" }}>
             Phone (optional)

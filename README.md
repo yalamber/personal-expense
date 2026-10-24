@@ -29,8 +29,8 @@ The app has four spaces plus Settings, and Log on every screen:
   and money moved in from accounts.
 - **Khata**: the family's tabs with shops, relatives and friends, one book per person, with what
   we owe and what we are owed at the top.
-- **Settings**: starting point, forwarding setup, accounts, people, envelopes, inbox, payday,
-  CSV export.
+- **Settings**: starting point, accounts, every month, envelopes, people, forwarding setup, inbox,
+  payday, CSV export.
 
 **Day one, not month three.** The starting point (Settings › Starting point) takes what the family
 has and owes today, so balances, Today and the Plan are right from the first day:
@@ -62,6 +62,25 @@ book started.
 
 Today shows what we have (held, owed, FD interest so far) and the month's loan installments.
 
+**Every month** (Settings › Every month): the bills and income that come as a matter of course,
+each with its day of the month: rent, school fees, the salary, the tenant's rent. Today keeps a
+bill that is not yet in the book aside, out of the day figure, and counts income still to come as
+expected (the headline says "once the expected Rs 90,000 is in"). From its day on, Decide asks
+"Did Rs 25,000 for Rent go out on 1 Oct?" with one tap to log it, "It is already in the book"
+(the month's entries that look like it, or handled outside the book), or skip the month. The Log
+sheet offers the month's open items as chips, and an entry logged with the same name and amount
+is linked on its own. Entries carry the item they stand for, so removing one opens the month
+again. Loan installments stay with the loan in Accounts; envelopes watch a category's spending.
+
+**The headline explains itself.** The month's arithmetic lives in `src/shared/month.ts`: income
+(what came in; if nothing yet, the every-month income still to come, or failing that the usual
+month), less spending, less what is set aside for goals, loan installments and bills, over the
+days to payday. Today opens "How is this worked out?" under the headline with those lines, and
+the headline says which case it is in: plain, "once the expected … is in", "if the usual … comes in
+and nothing is set aside" (with a nudge to add bills and give the goals a monthly amount), or past
+the plan. Entries the family logged can be corrected in the book (amount, date and name); the
+bank's figures stay as the bank wrote them.
+
 **Charts** (`src/web/src/charts.tsx`, plain SVG and HTML, no library): Today draws the month's
 spending against an even "on plan" line, where it went by category, and the last six months in and
 out (`GET /months`); Plan draws the road month by month from the simulator's trajectory, each
@@ -70,8 +89,8 @@ moved; Accounts shows how far an FD or a loan has run. Every chart has a hover r
 view, and the series colours are validated for colour-blind separation.
 Entries on deposits, loans and money lent are moves, never the month's income or spending.
 
-Next: bank-specific email parsers (needs three sample emails per bank), recurring bills, history
-backfill.
+Next: bank-specific email parsers (needs three sample emails per bank), history backfill, yearly
+bills (insurance, school fees paid once a year).
 
 ## Offline
 
@@ -124,6 +143,20 @@ curl -X POST 'http://localhost:8787/cdn-cgi/handler/email?from=alerts@bank.examp
 The `<token>` is shown on the inbox page as part of the household's inbound address.
 Parsing runs right after delivery, so the row moves from `queued` to `no parser yet` within
 a few seconds.
+
+### Tests
+
+`npm test` runs the unit tests: the month's arithmetic, every-month items, the plan simulator,
+deposits and loans, dedupe, the outbox, the page cache. `npm run test:e2e` builds the app, starts
+`wrangler dev` on a fresh local database (port 8788, `MAILER=log`), and runs the suites in
+`test/e2e/` in order: the core API (sign-in, accounts, logging, twins, email on the subdomain),
+the starting point (balances, FDs, loans), the khata and offline replay, every month and the
+headline's modes, then a seeded household for the browser suites: offline logging and sync, the
+pages at phone and desktop width, skeletons, Today's arithmetic, Every month, Decide's card.
+Browser suites need Playwright and a Chromium (`npm i -D playwright && npx playwright install
+chromium`, or `E2E_CHROMIUM=/path/to/chrome`); without one they are reported as skipped.
+`E2E_SHOTS=<dir>` keeps screenshots, `E2E_SKIP_BUILD=1` reuses `dist/`, and a suite name
+(`npm run test:e2e -- api-recurring`) runs just that one with what it needs.
 
 ## Deploying
 
@@ -226,6 +259,7 @@ needs the Workers Paid plan and a build token with Queues edit permission.
 | `npm run deploy` | Build and `wrangler deploy` |
 | `npm run typecheck` | Type-check worker and web code |
 | `npm test` | Unit tests (vitest) |
+| `npm run test:e2e` | End to end: builds, starts a local Worker on a fresh database, runs `test/e2e/*` against it |
 | `npm run db:generate` | Generate a migration from `src/worker/db/schema.ts` |
 | `npm run db:migrate:local` / `:remote` | Apply migrations locally or to the Cloudflare database |
 | `npm run cf:types` | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` |
@@ -239,15 +273,18 @@ src/worker/          Worker: API, email handler, parse step, cron
   auth/              Magic links, sessions, generated signing secret
   http/routes/       households, accounts (balances, deposits, loans, repayments, maturity, contact khata),
                      ledger (transactions, budgets, export), imports (CSV, review),
-                     goals (goals, parts, money in, plan), home (today, decide, log hints)
+                     goals (goals, parts, money in, plan), recurring (every month),
+                     home (today, decide, log hints)
   ledger/            Categories, merchant memory, transactions and transfers
   ingest/            Email Worker, parse step, ingest pipeline, parser registry
   lib/               Small Worker helpers
 src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise, freed EMIs), used by both sides
 src/shared/deposit.ts, loan.ts   Fixed-deposit interest and maturity; EMI, interest split, months left
+src/shared/month.ts, recurring.ts   The month's arithmetic behind Today's headline; every-month items and where each stands
 src/web/             React web app (Vite root): Today, Log, Decide, Plan, Khata, Settings
 migrations/          Drizzle-generated SQL applied by wrangler or the Cloudflare connector
 test/                Vitest unit tests and email fixtures
+test/e2e/            End-to-end suites (API and browser) and the runner that starts a local Worker for them
 ```
 
 ## How imports work

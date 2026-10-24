@@ -1,3 +1,4 @@
+import { minorDigits, parseAmountToMinor } from "../../../shared/money";
 import { useCallback, useEffect, useState } from "react";
 import { worth } from "../../../shared/worth";
 import { api, ApiError, type Account, type AccountType, type Goal, type Household } from "../api";
@@ -167,11 +168,11 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
         </div>
         <form className="row" style={{ alignItems: "flex-end" }} onSubmit={saveTypical}>
           <label style={{ flex: "1 1 160px" }}>
-            Comes in (salary, rent, interest)
+            Comes in, a month (salary, rent, interest)
             <input inputMode="decimal" value={income} disabled={!canWrite} onChange={(e) => { setIncome(e.target.value); setTypicalSaved(false); }} />
           </label>
           <label style={{ flex: "1 1 160px" }}>
-            Goes out (everyday spending)
+            Goes out, a month (everyday spending)
             <input inputMode="decimal" value={spend} disabled={!canWrite} onChange={(e) => { setSpend(e.target.value); setTypicalSaved(false); }} />
           </label>
           {canWrite && (
@@ -180,7 +181,14 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
             </button>
           )}
         </form>
-        <span className="small muted">Leave loan installments out of "goes out"; the book already knows them.</span>
+        <UsualDay income={income} spend={spend} currency={cur} />
+        <span className="small muted">
+          Leave loan installments out of "goes out"; the book already knows them. Rent, fees and the salary can be listed on their own under{" "}
+          <a href={`/h/${household.id}/settings/every-month`} onClick={onLinkClick}>
+            Every month
+          </a>
+          , and the book then expects them on the day.
+        </span>
       </section>
 
       {goals.length > 0 && holders.length > 0 && (
@@ -219,5 +227,19 @@ export function StartingPoint({ household, onChanged }: { household: Household; 
         </div>
       )}
     </>
+  );
+}
+
+/** The usual month said per day, so a year's figure typed in by mistake shows itself at once. */
+function UsualDay({ income, spend, currency }: { income: string; spend: string; currency: string }) {
+  const inc = parseAmountToMinor(income, currency) ?? 0;
+  const out = parseAmountToMinor(spend, currency) ?? 0;
+  if (inc <= 0) return null;
+  const unit = 10 ** minorDigits(currency);
+  const perDay = (m: number) => formatMoney(Math.floor(m / 30 / unit) * unit, currency);
+  return (
+    <span className="small" style={{ color: "var(--ink-soft)" }}>
+      That is about {perDay(inc)} a day coming in{out > 0 ? `, and about ${perDay(Math.max(0, inc - out))} a day left after everyday spending` : ""}. A month's figures, not a year's.
+    </span>
   );
 }

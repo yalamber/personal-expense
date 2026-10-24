@@ -215,6 +215,8 @@ export const transactions = sqliteTable(
     confirmedLineId: text("confirmed_line_id"),
     /** Set when this transaction is money moved toward a goal. */
     goalId: text("goal_id"),
+    /** The every-month item this entry is this month's instance of (the rent, the salary). */
+    recurringId: text("recurring_id"),
     voidedAt: text("voided_at"),
     createdAt: text("created_at").notNull().default(now),
   },
@@ -229,43 +231,45 @@ export const transactions = sqliteTable(
 // Planning
 // ---------------------------------------------------------------------------
 
-export const recurringRules = sqliteTable(
-  "recurring_rules",
+/**
+ * Every month: the bills and income the family expects (rent, school fees, a salary, the
+ * tenant's rent). Today sets a bill aside before it is paid, and Decide asks on the day.
+ */
+export const recurring = sqliteTable(
+  "recurring",
   {
     id: text("id").primaryKey(),
     householdId: text("household_id").notNull().references(() => households.id),
-    kind: text("kind", { enum: ["expense", "income"] }).notNull(),
     name: text("name").notNull(),
+    direction: text("direction", { enum: ["out", "in"] }).notNull(),
     amountMinor: integer("amount_minor").notNull(),
-    /** RFC 5545 RRULE, e.g. FREQ=MONTHLY;BYMONTHDAY=1 */
-    cadence: text("cadence").notNull(),
-    nextRun: text("next_run").notNull(),
-    endDate: text("end_date"),
-    accountId: text("account_id").references(() => accounts.id),
+    /** The day of the month it usually lands, 1 to 28. */
+    dayOfMonth: integer("day_of_month").notNull(),
     categoryId: text("category_id").references(() => categories.id),
-    merchantId: text("merchant_id").references(() => merchants.id),
-    /** JSON array of { from, amountMinor } so price creep can be detected. */
-    priceHistory: text("price_history").notNull().default("[]"),
+    /** The account it usually leaves from or arrives in; null means ask when logging. */
+    accountId: text("account_id").references(() => accounts.id),
+    note: text("note"),
+    /** A paused item stays in the list but is neither expected nor set aside. */
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    /** Removed items keep their name on the entries they posted. */
+    archivedAt: text("archived_at"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("recurring_household").on(t.householdId)],
 );
 
-export const incomeStreams = sqliteTable(
-  "income_streams",
+/** A month an item was skipped, or marked handled without an entry in the book. */
+export const recurringMonths = sqliteTable(
+  "recurring_months",
   {
-    id: text("id").primaryKey(),
-    householdId: text("household_id").notNull().references(() => households.id),
-    name: text("name").notNull(),
-    ownerMemberId: text("owner_member_id").references(() => members.id),
-    cadence: text("cadence").notNull(),
-    expectedNetMinor: integer("expected_net_minor").notNull(),
-    variability: text("variability", { enum: ["fixed", "variable", "one_off"] }).notNull().default("fixed"),
-    nextExpectedAt: text("next_expected_at"),
-    lastReceivedAt: text("last_received_at"),
+    recurringId: text("recurring_id").notNull().references(() => recurring.id),
+    /** YYYY-MM */
+    month: text("month").notNull(),
+    state: text("state", { enum: ["skipped", "done"] }).notNull(),
+    memberId: text("member_id").references(() => members.id),
     createdAt: text("created_at").notNull().default(now),
   },
-  (t) => [index("income_household").on(t.householdId)],
+  (t) => [primaryKey({ columns: [t.recurringId, t.month] })],
 );
 
 export const budgets = sqliteTable(

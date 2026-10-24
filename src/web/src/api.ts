@@ -177,7 +177,30 @@ export type Transaction = {
   transferPairId: string | null;
   confirmedAt: string | null;
   goalId: string | null;
+  /** This month's instance of an every-month item (the rent, the salary). */
+  recurringId: string | null;
 };
+
+export type RecurringState = "posted" | "skipped" | "done" | "due" | "upcoming" | "paused";
+
+/** An every-month item with where it stands in the month asked for. */
+export type RecurringRow = {
+  id: string;
+  name: string;
+  direction: "out" | "in";
+  amountMinor: number;
+  dayOfMonth: number;
+  active: boolean;
+  categoryId: string | null;
+  accountId: string | null;
+  note: string | null;
+  status: { state: RecurringState; due: string; daysUntil: number; transactionId: string | null };
+};
+
+export type RecurringBody = Partial<{ name: string; direction: "out" | "in"; amount: string; dayOfMonth: number; categoryId: string | null; accountId: string | null; note: string; active: boolean }>;
+
+/** An entry already in the book that could be this month's instance of an item. */
+export type RecurringCandidate = { id: string; date: string; amountMinor: number; name: string | null; accountName: string | null; source: string };
 
 export type Summary = {
   month: string;
@@ -305,11 +328,19 @@ export type Today = {
   daysLeft: number;
   incomeMinor: number;
   incomeExpected: boolean;
+  /** The part of the income still to come, when expected. */
+  expectedPartMinor: number;
+  incomeSource: "logged" | "recurring" | "usual" | "none";
+  /** Months behind the usual figure (2 or more means the book's own average). */
+  usualMonths: number;
+  mode: "nothing" | "unplanned" | "expected" | "over" | "ok";
   spentMinor: number;
   goalsMinor: number;
   plannedMinor: number;
   movedMinor: number;
   loansMinor: number;
+  /** Every-month bills not yet in the book, kept out of the day figure. */
+  billsMinor: number;
   worth: { haveMinor: number; oweMinor: number; netMinor: number; accruedMinor: number };
   needsStart: boolean;
   everydayLeftMinor: number;
@@ -320,9 +351,11 @@ export type Today = {
   bookMatchesThrough: string | null;
   decideCount: number;
   nextGoal: (Goal & { outcome: { doneMonth: string | null; lateMonths: number | null } | null }) | null;
+  comingUp: { id: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; state: RecurringState; daysUntil: number; accountId: string | null; transactionId: string | null }[];
 };
 
 export type DecideCard =
+  | { kind: "recurring"; key: string; recurringId: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; month: string; accountId: string | null; categoryId: string | null; note: string | null }
   | { kind: "forwarding"; key: string; statementId: string; code: string | null; link: string | null; requester: string | null; receivedAt: string }
   | {
       kind: "twin";
@@ -360,6 +393,8 @@ export type DecideCard =
   | { kind: "installment"; key: string; accountId: string; name: string; institution: string | null; due: string; installmentMinor: number; interestMinor: number; settleAccountId: string | null; owedMinor: number };
 
 export type LogHints = {
+  /** This month's bills and income not yet in the book. */
+  recurring: { id: string; name: string; direction: "out" | "in"; amountMinor: number; categoryId: string | null; accountId: string | null; due: string; state: RecurringState }[];
   repeats: { name: string; amountMinor: number; direction: "out" | "in"; accountId: string; categoryId: string | null; count: number; last: string }[];
   merchants: { name: string; amountMinor: number; direction: "out" | "in"; accountId: string; categoryId: string | null; last: string }[];
 };
@@ -391,6 +426,7 @@ export const paths = {
   months: (id: string, count = 6) => `${h(id)}/months?count=${count}`,
   today: (id: string) => `${h(id)}/today`,
   decide: (id: string) => `${h(id)}/decide`,
+  recurring: (id: string) => `${h(id)}/recurring`,
   plan: (id: string) => `${h(id)}/plan`,
   goals: (id: string) => `${h(id)}/goals`,
   contributions: (id: string, goalId: string) => `${h(id)}/goals/${goalId}/contributions`,
@@ -439,10 +475,11 @@ export const api = {
       note: string;
       isPersonal: boolean;
       paidByMemberId?: string | null;
+      recurringId?: string | null;
       force?: boolean;
     },
-  ) => request<{ id: string; categoryId: string | null }>("POST", `${h(id)}/transactions`, body),
-  updateTransaction: (id: string, txId: string, body: Partial<{ categoryId: string | null; note: string; isPersonal: boolean; date: string; amount: string; description: string }>) =>
+  ) => request<{ id: string; categoryId: string | null; recurringId: string | null }>("POST", `${h(id)}/transactions`, body),
+  updateTransaction: (id: string, txId: string, body: Partial<{ categoryId: string | null; note: string; isPersonal: boolean; date: string; amount: string; description: string; recurringId: string | null }>) =>
     request<{ ok: true }>("PATCH", `${h(id)}/transactions/${txId}`, body),
   voidTransaction: (id: string, txId: string) => request<{ ok: true }>("DELETE", `${h(id)}/transactions/${txId}`),
   addTransfer: (id: string, body: { fromAccountId: string; toAccountId: string; amount: string; date: string; note: string }) =>
@@ -475,6 +512,16 @@ export const api = {
   decideCards: (id: string) => request<DecideCard[]>("GET", `${h(id)}/decide`),
   snooze: (id: string, key: string, title: string) => request<{ ok: true; until: string }>("POST", `${h(id)}/decide/snooze`, { key, title }),
   logHints: (id: string) => request<LogHints>("GET", `${h(id)}/log-hints`),
+
+  recurring: (id: string, month?: string) => request<RecurringRow[]>("GET", `${h(id)}/recurring${month ? `?month=${month}` : ""}`),
+  createRecurring: (id: string, body: RecurringBody) => request<{ id: string }>("POST", `${h(id)}/recurring`, body),
+  updateRecurring: (id: string, itemId: string, body: RecurringBody) => request<{ ok: true }>("PATCH", `${h(id)}/recurring/${itemId}`, body),
+  removeRecurring: (id: string, itemId: string) => request<{ ok: true }>("DELETE", `${h(id)}/recurring/${itemId}`),
+  postRecurring: (id: string, itemId: string, body: { date?: string; accountId?: string; amount?: string; note?: string }) => request<{ id: string; categoryId: string | null }>("POST", `${h(id)}/recurring/${itemId}/post`, body),
+  skipRecurring: (id: string, itemId: string, body: { month?: string }) => request<{ ok: true }>("POST", `${h(id)}/recurring/${itemId}/skip`, body),
+  doneRecurring: (id: string, itemId: string, body: { month?: string; transactionId?: string }) => request<{ ok: true }>("POST", `${h(id)}/recurring/${itemId}/done`, body),
+  undoRecurring: (id: string, itemId: string, body: { month?: string }) => request<{ ok: true }>("POST", `${h(id)}/recurring/${itemId}/undo`, body),
+  recurringCandidates: (id: string, itemId: string, month?: string) => request<RecurringCandidate[]>("GET", `${h(id)}/recurring/${itemId}/candidates${month ? `?month=${month}` : ""}`),
   dismissStatement: (id: string, statementId: string) => request<{ ok: true }>("POST", `${h(id)}/statements/${statementId}/dismiss`),
 
   bankBalance: (id: string, accountId: string, body: { amount: string; date: string; startBook?: boolean }) =>

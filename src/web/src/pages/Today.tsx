@@ -9,7 +9,7 @@ import { useQuery } from "../query";
 import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Pending } from "./Pending";
-import { CategorySelect, Checks, Icon, MonthSwitcher, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
+import { CategorySelect, Checks, Icon, MonthSwitcher, amountInput, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
 
 /** Accounts that get bank statements; deposits, loans and money lent are kept by the family. */
 const STATEMENT_TYPES: AccountType[] = ["checking", "savings", "credit", "wallet"];
@@ -56,8 +56,9 @@ export function Today({
   if (!data) return <PageSkeleton kind="today" />;
 
   const weekday = new Date(`${data.today}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
-  const nothingYet = data.incomeMinor === 0 && data.spentMinor === 0;
-  const over = data.everydayLeftMinor < 0;
+  const nothingYet = data.mode === "nothing";
+  const over = data.mode === "over";
+  const base = `/h/${household.id}`;
   const goalName = (id: string | null) => goals.find((g) => g.id === id)?.name;
   // The month in pictures: spending by day against the pace, and where it went.
   const viewing = month ?? data.month;
@@ -103,8 +104,26 @@ export function Today({
               ? "Log this month's income, and the book will tell you what a day can cost."
               : over
                 ? `This month is ${formatMoney(-data.everydayLeftMinor, cur)} past the plan.`
-                : `${formatMoney(data.perDayMinor, cur)} a day keeps everything on plan.`}
+                : data.mode === "unplanned"
+                  ? `${formatMoney(data.perDayMinor, cur)} a day, if the usual ${formatMoney(data.incomeMinor, cur)} comes in and nothing is set aside.`
+                  : data.mode === "expected"
+                    ? `${formatMoney(data.perDayMinor, cur)} a day keeps everything on plan, once the expected ${formatMoney(data.expectedPartMinor, cur)} is in.`
+                    : `${formatMoney(data.perDayMinor, cur)} a day keeps everything on plan.`}
           </h1>
+          {data.mode === "unplanned" && canWrite && (
+            <span className="small" style={{ color: "var(--ink-soft)" }}>
+              Nothing is set aside yet, so the whole month reads as spending money. Add what comes{" "}
+              <a href={`${base}/settings/every-month`} onClick={onLinkClick}>
+                every month
+              </a>{" "}
+              and give the{" "}
+              <a href={`${base}/plan`} onClick={onLinkClick}>
+                goals
+              </a>{" "}
+              a monthly amount, and this figure means something.
+            </span>
+          )}
+          {!nothingYet && <HowItWorks data={data} cur={cur} />}
           {data.bookMatchesThrough ? (
             <span className="trust">
               <Checks confirmed /> The book matches the bank through {shortDate(data.bookMatchesThrough)}
@@ -132,6 +151,12 @@ export function Today({
             <div>
               <dt>Loan installments</dt>
               <dd>{formatMoney(data.loansMinor, cur, { symbol: false })}</dd>
+            </div>
+          )}
+          {data.billsMinor > 0 && (
+            <div>
+              <dt>Bills to come</dt>
+              <dd>{formatMoney(data.billsMinor, cur, { symbol: false })}</dd>
             </div>
           )}
           <div>
@@ -256,6 +281,8 @@ export function Today({
               <Bars rows={topRows} format={(v) => formatMoney(v, cur, { symbol: false })} />
             </section>
           )}
+
+          <ComingUp household={household} data={data} canWrite={canWrite} onChanged={onChanged} />
 
           <section className="card stack" aria-labelledby="env-h">
             <div className="row between">
@@ -426,16 +453,23 @@ function BookRow({
   onChanged: () => void;
 }) {
   const [note, setNote] = useState(tx.note ?? "");
+  const [editing, setEditing] = useState(false);
+  const [amount, setAmount] = useState(amountInput(tx.amountMinor, household.currency));
+  const [date, setDate] = useState(tx.date);
+  const [desc, setDesc] = useState(tx.description ?? tx.merchantName ?? "");
   const [error, setError] = useState<string | null>(null);
   const isMove = Boolean(tx.transferPairId || tx.direction === "transfer" || tx.goalId);
   const name = tx.merchantName ?? tx.description ?? "(no description)";
   const confirmed = tx.source !== "manual" || Boolean(tx.confirmedAt);
   const sign = isMove ? "" : tx.direction === "in" ? "+" : "−";
-  const meta = [goalName ? `Toward ${goalName}` : isMove ? "Move between accounts" : categoryLabel(categories, tx.categoryId), tx.accountName, tx.paidByName, tx.isPersonal ? "personal" : null, tx.note]
+  // The family's own figures can be corrected; the bank's stay as the bank wrote them.
+  const ownFigures = tx.source === "manual" || tx.source === "recurring";
+  const meta = [goalName ? `Toward ${goalName}` : isMove ? "Move between accounts" : categoryLabel(categories, tx.categoryId), tx.accountName, tx.paidByName, tx.isPersonal ? "personal" : null, tx.recurringId ? "every month" : null, tx.note]
     .filter(Boolean)
     .join(" · ");
+  const changed = amount !== amountInput(tx.amountMinor, household.currency) || date !== tx.date || desc.trim() !== (tx.description ?? tx.merchantName ?? "");
 
-  async function update(body: { categoryId?: string | null; note?: string }) {
+  async function update(body: Parameters<typeof api.updateTransaction>[2]) {
     setError(null);
     try {
       await api.updateTransaction(household.id, tx.id, body);
@@ -495,10 +529,44 @@ function BookRow({
                 <button type="button" className="secondary" onClick={() => update({ note })} disabled={note === (tx.note ?? "")}>
                   Save note
                 </button>
+                {ownFigures && !isMove && !editing && (
+                  <button type="button" className="secondary" onClick={() => setEditing(true)}>
+                    Change amount, date or name
+                  </button>
+                )}
                 <button type="button" className="quiet" onClick={remove}>
                   Remove
                 </button>
               </div>
+              {editing && (
+                <form
+                  className="row"
+                  style={{ alignItems: "flex-end" }}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void update({ amount, date, description: desc.trim() || undefined }).then(() => setEditing(false));
+                  }}
+                >
+                  <label style={{ flex: "1 1 140px" }}>
+                    {tx.direction === "in" ? "From" : "Paid to"}
+                    <input value={desc} onChange={(e) => setDesc(e.target.value)} />
+                  </label>
+                  <label style={{ flex: "0 1 120px" }}>
+                    Amount
+                    <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                  </label>
+                  <label style={{ flex: "0 1 150px" }}>
+                    Date
+                    <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
+                  </label>
+                  <button type="submit" className="secondary" disabled={!changed}>
+                    Save changes
+                  </button>
+                  <button type="button" className="quiet" onClick={() => setEditing(false)}>
+                    Cancel
+                  </button>
+                </form>
+              )}
             </>
           ) : (
             <span className="small muted">Only the person who paid can change a personal entry.</span>
@@ -507,5 +575,131 @@ function BookRow({
         </div>
       )}
     </>
+  );
+}
+
+/** The arithmetic behind the headline, line by line, and where the income figure comes from. */
+function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
+  const n = (m: number) => formatMoney(m, cur, { symbol: false });
+  const incomeLabel = data.incomeSource === "usual" ? "A usual month's income" : data.incomeExpected ? "Came in and expected" : "Came in";
+  return (
+    <details className="how">
+      <summary>How is this worked out?</summary>
+      <div className="sum mono">
+        <span>{incomeLabel}</span>
+        <span>{n(data.incomeMinor)}</span>
+        <span>− Spent so far</span>
+        <span>{n(data.spentMinor)}</span>
+        <span>− To the goals</span>
+        <span>{n(data.goalsMinor)}</span>
+        {data.loansMinor > 0 && (
+          <>
+            <span>− Loan installments</span>
+            <span>{n(data.loansMinor)}</span>
+          </>
+        )}
+        {data.billsMinor > 0 && (
+          <>
+            <span>− Bills still to come</span>
+            <span>{n(data.billsMinor)}</span>
+          </>
+        )}
+        <span className="total">= For everyday things</span>
+        <span className="total">{n(data.everydayLeftMinor)}</span>
+        <span>
+          ÷ {data.daysLeft} {data.daysLeft === 1 ? "day" : "days"} to payday ({shortDate(data.payday)})
+        </span>
+        <span>{n(data.perDayMinor)} a day</span>
+      </div>
+      <span className="small muted">
+        {data.incomeSource === "usual"
+          ? `Nothing has come in yet this month, so ${data.usualMonths >= 2 ? `the average of the last ${data.usualMonths} months` : "the usual month from the starting point"} stands in. `
+          : data.incomeExpected
+            ? "Income listed under Every month and not yet in the book is counted as if it were in. "
+            : ""}
+        Goals count the larger of what is planned and what has moved this month. The day figure is rounded down to whole {cur === "NPR" || cur === "INR" ? "rupees" : "units"}.
+      </span>
+    </details>
+  );
+}
+
+/** This month's every-month items: what is in, what is due, what is still to come. */
+function ComingUp({ household, data, canWrite, onChanged }: { household: Household; data: TodayData; canWrite: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const cur = household.currency;
+  const base = `/h/${household.id}`;
+  const rows = data.comingUp.filter((r) => r.state !== "paused");
+  const open = rows.filter((r) => r.state === "due" || r.state === "upcoming");
+
+  async function logIt(r: TodayData["comingUp"][number]) {
+    setBusy(r.id);
+    setError(null);
+    try {
+      await api.postRecurring(household.id, r.id, { date: r.due <= data.today ? r.due : data.today });
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not log it");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="card stack" aria-labelledby="coming-h" style={{ gap: 4 }}>
+      <div className="row between">
+        <h2 id="coming-h">Every month</h2>
+        <a className="small" href={`${base}/settings/every-month`} onClick={onLinkClick}>
+          {rows.length ? "Change" : "Set them"}
+        </a>
+      </div>
+      {rows.length === 0 && <span className="small muted">Rent, school fees, the salary: add what comes every month, and Today sets each bill aside before it is paid.</span>}
+      {rows.map((r) => {
+        const done = r.state === "posted" || r.state === "done" || r.state === "skipped";
+        const when =
+          r.state === "posted"
+            ? "in the book"
+            : r.state === "done"
+              ? "handled"
+              : r.state === "skipped"
+                ? "skipped this month"
+                : r.state === "due"
+                  ? r.daysUntil === 0
+                    ? "due today"
+                    : `due ${shortDate(r.due)}`
+                  : r.daysUntil === 1
+                    ? "tomorrow"
+                    : `in ${r.daysUntil} days`;
+        return (
+          <div key={r.id} className="bill-row">
+            <span className="who">
+              <strong className={done ? "done" : ""}>{r.name}</strong>
+              <span className="small muted">{when}</span>
+            </span>
+            <span className="end">
+              <span className={`mono ${r.direction === "in" ? "amount-in" : ""}`} style={{ color: done ? "var(--muted)" : undefined }}>
+                {r.direction === "in" ? "+" : "−"}
+                {formatMoney(r.amountMinor, cur, { symbol: false })}
+              </span>
+              {r.state === "posted" ? (
+                <Checks confirmed={false} />
+              ) : canWrite && r.state === "due" ? (
+                r.accountId ? (
+                  <button type="button" className="link small" disabled={busy === r.id} onClick={() => logIt(r)}>
+                    Log it
+                  </button>
+                ) : (
+                  <a className="small" href={`${base}/decide`} onClick={onLinkClick}>
+                    Log it
+                  </a>
+                )
+              ) : null}
+            </span>
+          </div>
+        );
+      })}
+      {open.length > 0 && data.billsMinor > 0 && <span className="small muted">{formatMoney(data.billsMinor, cur)} of bills still to come is kept out of the day figure.</span>}
+      {error && <div className="error small">{error}</div>}
+    </section>
   );
 }

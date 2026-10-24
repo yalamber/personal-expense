@@ -9,6 +9,9 @@ import { Hono } from "hono";
 import { and, between, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { addDays, monthRange, shiftMonth, todayIn } from "../../../shared/dates";
 import { minorDigits } from "../../../shared/money";
+import { monthMath } from "../../../shared/month";
+import { expectedInMinor, isOpen, reserveMinor } from "../../../shared/recurring";
+import { loadRecurring, type RecurringRow } from "../../ledger/recurring";
 import { normalizeMerchant } from "../../../shared/merchant";
 import { simulatePlan, type PlanGoal } from "../../../shared/plan";
 import { schema, type Db } from "../../db";
@@ -59,6 +62,7 @@ export type DecideCard =
       match: { id: string; date: string; amountMinor: number; direction: string; name: string | null; byName: string | null; source: string; confirmed: boolean; note: string | null };
     }
   | { kind: "balance"; key: string; accountId: string; accountName: string; bankMinor: number; bookMinor: number; asOf: string; suspects: { id: string; date: string; amountMinor: number; direction: string; name: string | null; byName: string | null }[] }
+  | { kind: "recurring"; key: string; recurringId: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; month: string; accountId: string | null; categoryId: string | null; note: string | null }
   | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null }
   | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number }
   | {
@@ -301,17 +305,31 @@ async function planCards(db: Db, household: { id: string; currency: string; time
   return [{ kind: "plan", key, goalId: waiting.id, goalName: waiting.name, suggestMinor: suggest, fromMonth: from.doneMonth, toMonth: to.doneMonth, wantedBy: waiting.wantedBy, onTime: (to.lateMonths ?? 1) <= 0, spareMinor: spare }];
 }
 
-export async function loadDecideCards(c: AppContext): Promise<DecideCard[]> {
+/** "Did the rent go out?": every-month items past their day and not yet in the book. */
+function recurringCards(rows: RecurringRow[], month: string): DecideCard[] {
+  return rows
+    .filter((r) => r.status.state === "due")
+    .map((r) => ({ kind: "recurring" as const, key: `recurring:${r.id}:${month}`, recurringId: r.id, name: r.name, direction: r.direction, amountMinor: r.amountMinor, due: r.status.due, month, accountId: r.accountId, categoryId: r.categoryId, note: r.note }));
+}
+
+export async function loadDecideCards(c: AppContext, recurring?: RecurringRow[]): Promise<DecideCard[]> {
   const db = c.get("db");
   const household = c.get("household");
   const memberId = c.get("member").id;
   const today = todayIn(household.timezone);
+  const month = today.slice(0, 7);
   const accounts = await loadAccountViews(db, household.id, today);
-  const [fwd, lines, balances, plan] = await Promise.all([forwardingCards(db, household.id), lineCards(db, household.id, memberId), balanceCards(db, household.id, memberId), planCards(db, household, accounts)]);
+  const [fwd, lines, balances, plan, every] = await Promise.all([
+    forwardingCards(db, household.id),
+    lineCards(db, household.id, memberId),
+    balanceCards(db, household.id, memberId),
+    planCards(db, household, accounts),
+    recurring ?? loadRecurring(db, household.id, month, today),
+  ]);
   const twins = lines.filter((x) => x.kind === "twin");
   const categories = lines.filter((x) => x.kind === "category");
-  // Forwarding checks and deadlines first, then anything that could count money twice.
-  return [...fwd, ...deadlineCards(accounts, today), ...twins, ...balances, ...plan, ...categories];
+  // Forwarding checks and deadlines first, then anything that could count money twice, then the month's bills.
+  return [...fwd, ...deadlineCards(accounts, today), ...twins, ...balances, ...recurringCards(every, month), ...plan, ...categories];
 }
 
 homeRoutes.get("/decide", async (c) => c.json(await loadDecideCards(c)));
@@ -341,6 +359,7 @@ homeRoutes.get("/today", async (c) => {
   const month = today.slice(0, 7);
   const { from, to } = monthRange(month);
 
+  const recurring = await loadRecurring(db, household.id, month, today);
   const [categories, txs, budgets, goals, basis, moved, cards, lastLines] = await Promise.all([
     db.query.categories.findMany({ where: eq(schema.categories.householdId, household.id) }),
     db
@@ -363,7 +382,7 @@ homeRoutes.get("/today", async (c) => {
           sql`(${schema.goalContributions.kind} = 'saved' or ${schema.goalContributions.transactionId} is not null)`,
         ),
       ),
-    loadDecideCards(c),
+    loadDecideCards(c, recurring),
     db
       .select({ accountId: schema.statementEmails.accountId, last: sql<string>`max(${schema.importLines.parsedDate})` })
       .from(schema.importLines)
@@ -382,11 +401,23 @@ homeRoutes.get("/today", async (c) => {
   // Installments: principal already paid this month is a transfer, so it is taken off here; an
   // installment still due is set aside whole (its interest is not spending yet).
   const loansMinor = loans.paidThisMonthMinor + loans.dueThisMonthMinor;
-  const incomeExpected = s.income === 0 && basis.source !== "none";
-  const incomeMinor = incomeExpected ? basis.incomeMinor : s.income;
-  const everydayLeftMinor = incomeMinor - s.spent - goalsMinor - loansMinor;
   const payday = nextPayday(today, household.monthStartDay);
   const daysLeft = Math.max(1, daysBetween(today, payday));
+  // Every-month bills not yet in the book are set aside; income not yet in stands in for the usual figure.
+  const rows = recurring.map((r) => ({ item: r, status: r.status }));
+  const billsMinor = reserveMinor(rows);
+  const math = monthMath({
+    loggedInMinor: s.income,
+    expectedInMinor: expectedInMinor(rows),
+    usual: { source: basis.source, incomeMinor: basis.incomeMinor },
+    spentMinor: s.spent,
+    goalsMinor,
+    loansMinor,
+    billsMinor,
+    daysLeft,
+    minorDigits: minorDigits(household.currency),
+  });
+  const { incomeMinor, incomeExpected, everydayLeftMinor } = math;
 
   // Envelopes: this month's budgets against spending in their top-level category.
   const tops = new Map(categories.filter((x) => !x.parentId).map((x) => [x.id, x]));
@@ -422,16 +453,22 @@ homeRoutes.get("/today", async (c) => {
     daysLeft,
     incomeMinor,
     incomeExpected,
+    expectedPartMinor: math.expectedPartMinor,
+    incomeSource: math.incomeSource,
+    usualMonths: basis.months,
+    mode: math.mode,
     spentMinor: s.spent,
     goalsMinor,
     plannedMinor,
     movedMinor,
     loansMinor,
+    billsMinor,
     worth: { haveMinor, oweMinor, netMinor: haveMinor - oweMinor, accruedMinor },
     needsStart: accounts.filter((a) => a.type !== "person").every((a) => a.openingBalanceDate === null),
     everydayLeftMinor,
-    // Whole currency units: "Rs 3,200 a day", never "Rs 3,245.55 a day".
-    perDayMinor: Math.floor(Math.max(0, everydayLeftMinor) / daysLeft / 10 ** minorDigits(household.currency)) * 10 ** minorDigits(household.currency),
+    perDayMinor: math.perDayMinor,
+    // This month's every-month items, for the Coming up card.
+    comingUp: recurring.map((r) => ({ id: r.id, name: r.name, direction: r.direction, amountMinor: r.amountMinor, due: r.status.due, state: r.status.state, daysUntil: r.status.daysUntil, accountId: r.accountId, transactionId: r.status.transactionId })),
     uncategorizedCount: s.uncategorized,
     envelopes,
     bank,
@@ -452,7 +489,9 @@ homeRoutes.get("/today", async (c) => {
 homeRoutes.get("/log-hints", async (c) => {
   const db = c.get("db");
   const household = c.get("household");
-  const since = addDays(todayIn(household.timezone), -120);
+  const today = todayIn(household.timezone);
+  const since = addDays(today, -120);
+  const every = (await loadRecurring(db, household.id, today.slice(0, 7), today)).filter((r) => isOpen(r.status));
   const rows = await db
     .select({
       merchantId: schema.transactions.merchantId,
@@ -489,6 +528,8 @@ homeRoutes.get("/log-hints", async (c) => {
     else repeats.set(key, { name, amountMinor: r.amountMinor, direction: r.direction, accountId: r.accountId, categoryId, count: 1, last: r.date });
   }
   return c.json({
+    // This month's bills and income not yet in the book, due ones first.
+    recurring: every.map((r) => ({ id: r.id, name: r.name, direction: r.direction, amountMinor: r.amountMinor, categoryId: r.categoryId, accountId: r.accountId, due: r.status.due, state: r.status.state })),
     repeats: [...repeats.values()].filter((r) => r.count >= 2).sort((a, b) => b.count - a.count || b.last.localeCompare(a.last)).slice(0, 6),
     merchants: [...merchants.values()].slice(0, 80),
   });

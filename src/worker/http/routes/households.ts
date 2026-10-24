@@ -13,6 +13,7 @@ import { goalRoutes } from "./goals";
 import { homeRoutes } from "./home";
 import { importRoutes } from "./imports";
 import { ledgerRoutes } from "./ledger";
+import { recurringRoutes } from "./recurring";
 
 export const householdRoutes = new Hono<HonoEnv>();
 
@@ -195,6 +196,7 @@ scoped.route("/", accountRoutes);
 scoped.route("/", ledgerRoutes);
 scoped.route("/", importRoutes);
 scoped.route("/", goalRoutes);
+scoped.route("/", recurringRoutes);
 scoped.route("/", homeRoutes);
 
 householdRoutes.route("/households/:householdId", scoped);

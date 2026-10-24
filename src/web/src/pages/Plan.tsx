@@ -332,6 +332,11 @@ export function Plan({ household, version, onChanged }: { household: Household; 
             </a>
           )}
         </div>
+        {data.goals.some((g) => !g.completedAt) && data.goals.every((g) => g.completedAt || !g.monthlyPlanMinor) && (
+          <div className="note small" role="status">
+            None of the goals has a monthly amount yet, so the road has nothing to run on and Today sets nothing aside. Open a goal and give it what goes in each month.
+          </div>
+        )}
         {data.goals.map((g, i) => (
           <div key={g.id} className="kv" style={{ alignItems: "center" }}>
             <span className="row" style={{ gap: 10, flexWrap: "nowrap", minWidth: 0 }}>

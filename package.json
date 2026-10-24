@@ -10,6 +10,7 @@
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
+    "test:e2e": "node test/e2e/run.mjs",
     "lint": "npm run typecheck",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply personal-expense --local",

@@ -50,6 +50,20 @@
       "when": 1792739848594,
       "tag": "0006_offline_replay",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792822127318,
+      "tag": "0007_drop_unused_planning",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792822201584,
+      "tag": "0008_every_month",
+      "breakpoints": true
     }
   ]
 }

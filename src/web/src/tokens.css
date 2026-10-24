@@ -1835,3 +1835,71 @@ ul.plain {
     text-align: left;
   }
 }
+
+/* ---- How is this worked out (Today), and the month's bills ---------------- */
+
+.how {
+  font-size: 13px;
+  max-width: 460px;
+}
+.how summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  list-style: none;
+  padding: 4px 0;
+}
+.how summary::-webkit-details-marker {
+  display: none;
+}
+.how summary::before {
+  content: "▸ ";
+}
+.how[open] summary::before {
+  content: "▾ ";
+}
+.how .sum {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  margin: 8px 0 8px;
+  font-size: 13px;
+}
+.how .sum .total {
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  font-weight: 600;
+}
+.bill-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 14px;
+}
+.bill-row:last-child {
+  border-bottom: 0;
+}
+.bill-row .who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.bill-row .who strong.done {
+  color: var(--muted);
+  font-weight: 500;
+}
+.bill-row .end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.choice-list button.secondary {
+  justify-content: space-between;
+  text-align: left;
+  font-weight: 500;
+}

@@ -96,6 +96,8 @@ export type NewTransaction = {
   transferPairId?: string | null;
   note?: string | null;
   goalId?: string | null;
+  /** This month's instance of an every-month item (the rent, the salary). */
+  recurringId?: string | null;
   /** Bank lines are confirmed when posted; leave unset for manual entries. */
   confirmedAt?: string | null;
 };
@@ -119,6 +121,7 @@ export function transactionValues(t: NewTransaction): typeof schema.transactions
     transferPairId: t.transferPairId ?? null,
     note: t.note ?? null,
     goalId: t.goalId ?? null,
+    recurringId: t.recurringId ?? null,
     confirmedAt: t.confirmedAt ?? (t.source === "email" || t.source === "csv" ? new Date().toISOString() : null),
   };
 }

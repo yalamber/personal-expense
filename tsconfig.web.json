@@ -11,5 +11,5 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src/web", "src/shared"]
+  "include": ["src/web", "src/shared", "test/query.test.ts", "test/outbox.test.ts"]
 }

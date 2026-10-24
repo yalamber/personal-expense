@@ -11,7 +11,7 @@ import { Icon } from "../ui";
  * the page, and each section opens with a way back.
  */
 
-export type SettingsSection = "household" | "people" | "start" | "accounts" | "envelopes" | "forwarding" | "inbox" | "app";
+export type SettingsSection = "household" | "people" | "start" | "accounts" | "every-month" | "envelopes" | "forwarding" | "inbox" | "app";
 
 export const SETTINGS_MENU: { group: string; items: { id: SettingsSection; title: string; text: string }[] }[] = [
   {
@@ -26,6 +26,7 @@ export const SETTINGS_MENU: { group: string; items: { id: SettingsSection; title
     items: [
       { id: "start", title: "Starting point", text: "Today's balances, fixed deposits, loans and a usual month" },
       { id: "accounts", title: "Accounts", text: "Bank, savings, FDs, loans and cards" },
+      { id: "every-month", title: "Every month", text: "Rent, fees and the salary: what comes and goes each month" },
       { id: "envelopes", title: "Envelopes", text: "Monthly amounts for the categories you want to watch" },
     ],
   },

@@ -52,12 +52,13 @@ export function Log({
   const [isPersonal, setIsPersonal] = useState(false);
   const [more, setMore] = useState(false);
   const [hints, setHints] = useState<LogHints | null>(null);
+  const [recurringId, setRecurringId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ step: "edit" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.logHints(household.id).then(setHints).catch(() => setHints({ repeats: [], merchants: [] }));
+    api.logHints(household.id).then(setHints).catch(() => setHints({ recurring: [], repeats: [], merchants: [] }));
   }, [household.id]);
 
   const known = useMemo(() => {
@@ -75,7 +76,23 @@ export function Log({
 
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "an account";
   const repeats = (hints?.repeats ?? []).filter((r) => (kind === "in" ? r.direction === "in" : r.direction === "out"));
+  // This month's bills and income not yet in the book: one tap fills the sheet and links the entry.
+  const coming = (hints?.recurring ?? []).filter((r) => (kind === "in" ? r.direction === "in" : r.direction === "out"));
   const yesterday = addDays(today, -1);
+
+  function useComing(r: LogHints["recurring"][number]) {
+    setPayee(r.name);
+    setAmount(amountInput(r.amountMinor, cur));
+    setCategoryId(r.categoryId);
+    setCategoryTouched(true);
+    if (r.accountId && accounts.some((a) => a.id === r.accountId)) {
+      setAccountId(r.accountId);
+      setAccountTouched(true);
+    }
+    setDate(r.due <= today ? r.due : today);
+    setRecurringId(r.id);
+    setPhase({ step: "edit" });
+  }
 
   function useRepeat(r: LogHints["repeats"][number]) {
     setPayee(r.name);
@@ -96,6 +113,8 @@ export function Log({
     setAccountTouched(false);
     setNote("");
     setIsPersonal(false);
+    setRecurringId(null);
+    setDate(today);
     setPhase({ step: "edit" });
     setError(null);
   }
@@ -148,10 +167,13 @@ export function Log({
           note,
           isPersonal,
           paidByMemberId: paidBy,
+          recurringId,
           force,
         });
         const filed = !categoryId && res.categoryId ? ` Filed under ${categoryLabel(categories, res.categoryId)}, from last time.` : "";
-        setPhase({ step: "done", message: isQueued(res) ? QUEUED_NOTE : `Logged.${filed} The first check is yours; the second comes when the bank confirms it.` });
+        const linked = isQueued(res) ? recurringId : res.recurringId;
+        const every = linked ? ` Counted as this month's ${coming.find((r) => r.id === linked)?.name ?? "bill"}.` : "";
+        setPhase({ step: "done", message: isQueued(res) ? QUEUED_NOTE : `Logged.${every}${filed} The first check is yours; the second comes when the bank confirms it.` });
       }
       onSaved();
     } catch (err) {
@@ -229,7 +251,7 @@ export function Log({
     <Sheet title="Log it" onClose={onClose} footer={footer}>
       <div className="seg" role="group" aria-label="Direction">
         {(["out", "in", "move"] as const).map((k) => (
-          <button key={k} type="button" className={k === "in" ? "in" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setPhase({ step: "edit" }); }}>
+          <button key={k} type="button" className={k === "in" ? "in" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setRecurringId(null); setPhase({ step: "edit" }); }}>
             {k === "out" ? "Money out" : k === "in" ? "Money in" : "Move or save"}
           </button>
         ))}
@@ -245,6 +267,20 @@ export function Log({
         </label>
         <input id="log-amount" inputMode="decimal" autoComplete="off" placeholder="0" style={{ width: `${Math.max(2, amount.length + 1)}ch` }} value={amount} onChange={(e) => { setAmount(e.target.value); setPhase({ step: "edit" }); }} />
       </div>
+
+      {phase.step === "edit" && kind !== "move" && coming.length > 0 && (
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="small muted">This month's {kind === "in" ? "income" : "bills"}, not in the book yet</span>
+          <div className="chips">
+            {coming.map((r) => (
+              <button key={r.id} type="button" className="chip" aria-pressed={recurringId === r.id} onClick={() => (recurringId === r.id ? setRecurringId(null) : useComing(r))}>
+                {r.name} <span className="mono">{formatMoney(r.amountMinor, cur, { symbol: false })}</span>
+              </button>
+            ))}
+          </div>
+          {recurringId && <span className="small" style={{ color: "var(--green-deep)" }}>Counts as this month's {coming.find((r) => r.id === recurringId)?.name ?? "bill"}; change the amount if it differs.</span>}
+        </div>
+      )}
 
       {phase.step === "edit" && kind !== "move" && repeats.length > 0 && (
         <div className="stack" style={{ gap: 6 }}>

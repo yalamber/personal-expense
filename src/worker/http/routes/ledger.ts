@@ -7,6 +7,8 @@ import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
 import { ensureCategories } from "../../ledger/categories";
 import { rememberCategory, resolveMerchant } from "../../ledger/merchants";
+import { normalizeMerchant } from "../../../shared/merchant";
+import { loadRecurring } from "../../ledger/recurring";
 import { KEPT_TYPES } from "../../ledger/overview";
 import { summarize } from "../../ledger/summary";
 import { createTransfer, findMatches, loadDedupeCandidates, transactionValues, DUPLICATE_WINDOW_DAYS } from "../../ledger/transactions";
@@ -29,6 +31,11 @@ async function accountBelongs(c: AppContext, accountId: string | undefined): Pro
   if (!accountId) return false;
   const a = await c.get("db").query.accounts.findFirst({ where: and(eq(schema.accounts.id, accountId), eq(schema.accounts.householdId, c.get("household").id)), columns: { id: true } });
   return Boolean(a);
+}
+
+async function recurringBelongs(c: AppContext, id: string): Promise<boolean> {
+  const row = await c.get("db").query.recurring.findFirst({ where: and(eq(schema.recurring.id, id), eq(schema.recurring.householdId, c.get("household").id)), columns: { id: true } });
+  return Boolean(row);
 }
 
 async function categoryBelongs(c: AppContext, categoryId: string | null | undefined): Promise<boolean> {
@@ -109,6 +116,7 @@ async function queryTransactions(c: AppContext, from: string, to: string, opts: 
       transferPairId: schema.transactions.transferPairId,
       confirmedAt: schema.transactions.confirmedAt,
       goalId: schema.transactions.goalId,
+      recurringId: schema.transactions.recurringId,
     })
     .from(schema.transactions)
     .leftJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
@@ -222,6 +230,7 @@ ledgerRoutes.post("/transactions", requireWriter, async (c) => {
     note?: string;
     isPersonal?: boolean;
     paidByMemberId?: string | null;
+    recurringId?: string | null;
     force?: boolean;
   }>(c);
 
@@ -234,6 +243,7 @@ ledgerRoutes.post("/transactions", requireWriter, async (c) => {
   if (!(await categoryBelongs(c, body.categoryId))) return c.json({ error: "category not found" }, 404);
   const description = (body.description ?? "").trim().slice(0, 200);
   if (!description) return c.json({ error: "add a short description, such as the shop name" }, 400);
+  if (body.recurringId && !(await recurringBelongs(c, body.recurringId))) return c.json({ error: "every-month item not found" }, 404);
 
   if (!body.force) {
     const twins = await findTwins(c, body.accountId!, direction, Math.abs(amount), date);
@@ -243,6 +253,16 @@ ledgerRoutes.post("/transactions", requireWriter, async (c) => {
   const merchant = await resolveMerchant(db, household.id, description);
   const categoryId = body.categoryId ?? merchant.defaultCategoryId;
   if (body.categoryId) await rememberCategory(db, merchant.id, body.categoryId);
+
+  // "Rent 25,000" logged without picking the chip is still this month's rent: when exactly one
+  // every-month item still open this month has the same name, direction and amount, link it.
+  let recurringId = body.recurringId ?? null;
+  if (!recurringId) {
+    const today = todayIn(household.timezone);
+    const open = (await loadRecurring(db, household.id, date.slice(0, 7), today)).filter((r) => r.active && (r.status.state === "due" || r.status.state === "upcoming"));
+    const same = open.filter((r) => r.direction === direction && r.amountMinor === Math.abs(amount) && normalizeMerchant(r.name).key === normalizeMerchant(description).key);
+    if (same.length === 1) recurringId = same[0]!.id;
+  }
 
   const values = transactionValues({
     householdId: household.id,
@@ -257,9 +277,10 @@ ledgerRoutes.post("/transactions", requireWriter, async (c) => {
     isPersonal: Boolean(body.isPersonal),
     paidByMemberId: body.paidByMemberId ?? c.get("member").id,
     source: "manual",
+    recurringId,
   });
   await db.insert(schema.transactions).values(values);
-  return c.json({ id: values.id, categoryId }, 201);
+  return c.json({ id: values.id, categoryId, recurringId }, 201);
 });
 
 ledgerRoutes.patch("/transactions/:id", requireWriter, async (c) => {
@@ -269,8 +290,12 @@ ledgerRoutes.patch("/transactions/:id", requireWriter, async (c) => {
   if (!tx || tx.voidedAt) return c.json({ error: "not found" }, 404);
   if (tx.isPersonal && tx.paidByMemberId !== c.get("member").id) return c.json({ error: "only the person who paid can edit a personal transaction" }, 403);
 
-  const body = await readJson<{ categoryId?: string | null; note?: string; isPersonal?: boolean; date?: string; amount?: string; description?: string }>(c);
+  const body = await readJson<{ categoryId?: string | null; note?: string; isPersonal?: boolean; date?: string; amount?: string; description?: string; recurringId?: string | null }>(c);
   const patch: Partial<typeof schema.transactions.$inferInsert> = {};
+  if (body.recurringId !== undefined) {
+    if (body.recurringId && !(await recurringBelongs(c, body.recurringId))) return c.json({ error: "every-month item not found" }, 404);
+    patch.recurringId = body.recurringId;
+  }
   if (body.categoryId !== undefined) {
     if (!(await categoryBelongs(c, body.categoryId))) return c.json({ error: "category not found" }, 404);
     patch.categoryId = body.categoryId;

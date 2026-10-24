@@ -9,6 +9,7 @@ import { Accounts } from "./Accounts";
 import { Budgets } from "./Budgets";
 import { Khata, KhataPage } from "./Khata";
 import { Decide } from "./Decide";
+import { EveryMonth } from "./EveryMonth";
 import { AppSettings, Forwarding, HouseholdSettings, SettingsLayout, sectionOf, useNarrow } from "./Settings";
 import { GoalDetail } from "./GoalDetail";
 import { Inbox } from "./Inbox";
@@ -152,6 +153,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
             {section === "people" && <Members household={household} />}
             {section === "start" && <StartingPoint household={household} onChanged={changed} />}
             {section === "accounts" && <Accounts household={household} version={version} onChanged={changed} />}
+            {section === "every-month" && <EveryMonth household={household} accounts={accounts} categories={categories} version={version} onChanged={changed} />}
             {section === "envelopes" && <Budgets household={household} />}
             {section === "forwarding" && <Forwarding household={household} />}
             {section === "inbox" && <Inbox household={household} />}

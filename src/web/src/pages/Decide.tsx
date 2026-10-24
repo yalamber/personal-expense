@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { monthName } from "../../../shared/plan";
 import { todayIn } from "../../../shared/dates";
-import { api, ApiError, type Account, type Category, type DecideCard, type Household } from "../api";
+import { api, ApiError, type Account, type Category, type DecideCard, type Household, type RecurringCandidate } from "../api";
 import { onLinkClick } from "../router";
 import { PageSkeleton } from "../skeleton";
 import { CategorySelect, Checks, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
@@ -242,6 +242,8 @@ export function Decide({ household, accounts, categories, version, onChanged }: 
 
       {card?.kind === "installment" && <InstallmentCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
 
+      {card?.kind === "recurring" && <RecurringCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
+
       {card?.kind === "category" && <CategoryCard key={card.key} card={card} household={household} categories={categories} busy={busy} canWrite={canWrite} act={act} later={later} />}
 
       {card?.kind === "plan" && (
@@ -461,6 +463,95 @@ function InstallmentCard({ card, household, accounts, busy, canWrite, act, later
             </button>
           </div>
           <span className="small muted">A different amount? Use Log a payment on the Accounts page.</span>
+        </>
+      )}
+    </section>
+  );
+}
+
+const everyday = (accounts: Account[]) => accounts.filter((a) => !a.closedAt && a.type !== "deposit" && a.type !== "loan" && a.type !== "lent" && a.type !== "person");
+
+/** An every-month item past its day: log it, point at the entry already in the book, or skip the month. */
+function RecurringCard({ card, household, accounts, busy, canWrite, act, later }: CardProps<"recurring">) {
+  const cur = household.currency;
+  const today = todayIn(household.timezone);
+  const others = everyday(accounts);
+  const [account, setAccount] = useState(card.accountId ?? others[0]?.id ?? "");
+  const [date, setDate] = useState(card.due);
+  const [found, setFound] = useState<RecurringCandidate[] | null>(null);
+  const [seeking, setSeeking] = useState(false);
+  const money = formatMoney(card.amountMinor, cur);
+  const isIn = card.direction === "in";
+  const late = card.due < today;
+
+  async function lookForIt() {
+    setSeeking(true);
+    try {
+      setFound(await api.recurringCandidates(household.id, card.recurringId, card.month));
+    } catch {
+      setFound([]);
+    } finally {
+      setSeeking(false);
+    }
+  }
+
+  return (
+    <section className="decide-card" aria-label="Every month">
+      <span className="eyebrow" style={{ color: late ? "var(--rust)" : "var(--marigold-deep)" }}>Every month</span>
+      <h2>
+        {isIn ? `Did ${money} from ${card.name} come in` : `Did ${money} for ${card.name} go out`} {card.due === today ? "today" : `on ${shortDate(card.due)}`}?
+      </h2>
+      <span className="small" style={{ color: "var(--ink-soft)" }}>
+        {isIn ? "Until it is in the book, Today counts it as expected, not as money in hand." : "Until it is in the book, Today keeps it aside, out of the day figure."}
+        {card.note ? ` ${card.note}` : ""}
+      </span>
+      {canWrite && (
+        <>
+          <div className="row" style={{ alignItems: "flex-end" }}>
+            <label style={{ flex: "1 1 160px" }}>
+              {isIn ? "Into" : "Paid from"}
+              <select value={account} onChange={(e) => setAccount(e.target.value)}>
+                {others.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+            <label style={{ flex: "1 1 140px" }}>
+              On
+              <input type="date" value={date} max={today} onChange={(e) => e.target.value && setDate(e.target.value)} />
+            </label>
+          </div>
+          <div className="actions">
+            <button type="button" disabled={busy || !account} onClick={() => act(() => api.postRecurring(household.id, card.recurringId, { date, accountId: account }), `${card.name}: ${money} logged.`)}>
+              Yes, log {money}
+            </button>
+            {found === null ? (
+              <button type="button" className="secondary" disabled={busy || seeking} onClick={lookForIt}>
+                {seeking ? "Looking…" : "It is already in the book"}
+              </button>
+            ) : (
+              <div className="stack choice-list" style={{ gap: 6 }}>
+                <span className="small muted">{found.length ? "Which entry is it?" : "Nothing in this month's book looks like it."}</span>
+                {found.map((t) => (
+                  <button key={t.id} type="button" className="secondary" disabled={busy} onClick={() => act(() => api.doneRecurring(household.id, card.recurringId, { month: card.month, transactionId: t.id }), `${card.name}: counted as the entry from ${shortDate(t.date)}.`)}>
+                    <span>
+                      {t.name ?? "(no description)"} · {shortDate(t.date)}
+                      {t.accountName ? ` · ${t.accountName}` : ""}
+                    </span>
+                    <span className="mono">{formatMoney(t.amountMinor, cur, { symbol: false })}</span>
+                  </button>
+                ))}
+                <button type="button" className="quiet" disabled={busy} onClick={() => act(() => api.doneRecurring(household.id, card.recurringId, { month: card.month }), `${card.name}: marked handled this month.`)}>
+                  It was handled outside the book
+                </button>
+              </div>
+            )}
+            <button type="button" className="quiet" disabled={busy} onClick={() => act(() => api.skipRecurring(household.id, card.recurringId, { month: card.month }), `${card.name}: skipped this month.`)}>
+              Skip this month
+            </button>
+            <button type="button" className="quiet" onClick={() => later(card.name)}>
+              Later
+            </button>
+          </div>
+          <span className="small muted">A different amount this time? Log it from the + button and pick {card.name} from the chips.</span>
         </>
       )}
     </section>
