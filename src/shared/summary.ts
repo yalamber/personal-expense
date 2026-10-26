@@ -38,6 +38,9 @@ export function summarize(txs: SummaryTx[], categories: SummaryCategory[]) {
     } else if (cat && (cat.kind === "need" || cat.kind === "want")) {
       spent -= t.amountMinor;
       perTop.set(key, (perTop.get(key) ?? 0) - t.amountMinor);
+    } else if (cat?.kind === "saving") {
+      // Money taken back out of savings (shares sold, a deposit broken) is not income.
+      saved -= t.amountMinor;
     } else {
       income += t.amountMinor;
     }

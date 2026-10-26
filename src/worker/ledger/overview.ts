@@ -3,10 +3,10 @@
  * goals with what is saved, loan installments, and the household's typical month.
  */
 import { and, asc, between, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
-import { monthRange, shiftMonth } from "../../shared/dates";
+import { addDays, monthRange, shiftMonth } from "../../shared/dates";
 import { accruedInterest, addMonths, daysBetween, maturityValue, termMonths, totalInterest, type Deposit } from "../../shared/deposit";
 import { interestLeft, monthsLeft, splitPayment } from "../../shared/loan";
-import type { PlanGoal } from "../../shared/plan";
+import type { PlanEvent, PlanGoal } from "../../shared/plan";
 import { schema, type Db } from "../db";
 import { summarize } from "./summary";
 
@@ -58,7 +58,10 @@ export type LoanView = {
   payoffMonth: string | null;
   interestLeftMinor: number | null;
   nextInterestMinor: number;
+  /** Principal paid into the loan this calendar month (a transfer, so not in spending). */
   paidThisMonthMinor: number;
+  /** What is still to pay on this month's installment (less any part already paid toward it). */
+  dueThisMonthMinor: number;
 };
 
 export type AccountView = AccountRow & { balanceMinor: number; deposit: DepositView | null; loan: LoanView | null; goalName: string | null };
@@ -76,16 +79,24 @@ export async function loadAccountViews(db: Db, householdId: string, today: strin
     db.query.accounts.findMany({ where: eq(schema.accounts.householdId, householdId), orderBy: [asc(schema.accounts.createdAt)] }),
     accountBalances(db, householdId, today),
     db.query.goals.findMany({ where: eq(schema.goals.householdId, householdId), columns: { id: true, name: true } }),
-    // Principal paid into loan accounts this month (installments arrive as money in).
+    // Loan payments over the last seven weeks: principal arrives in the loan account as money in;
+    // the interest part is an expense named "Interest: <loan>" on the account it was paid from.
     db
-      .select({ accountId: schema.transactions.accountId, total: sql<number>`coalesce(sum(${schema.transactions.amountMinor}), 0)` })
+      .select({ accountId: schema.transactions.accountId, date: schema.transactions.date, amountMinor: schema.transactions.amountMinor, direction: schema.transactions.direction, description: schema.transactions.description, type: schema.accounts.type })
       .from(schema.transactions)
       .innerJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
-      .where(and(eq(schema.accounts.householdId, householdId), eq(schema.accounts.type, "loan"), eq(schema.transactions.direction, "in"), between(schema.transactions.date, from, today), isNull(schema.transactions.voidedAt)))
-      .groupBy(schema.transactions.accountId),
+      .where(
+        and(
+          eq(schema.accounts.householdId, householdId),
+          between(schema.transactions.date, addDays(from, -50), today),
+          isNull(schema.transactions.voidedAt),
+          sql`((${schema.accounts.type} = 'loan' and ${schema.transactions.direction} = 'in') or (${schema.transactions.direction} = 'out' and ${schema.transactions.description} like 'Interest: %'))`,
+        ),
+      ),
   ]);
   const goalName = new Map(goals.map((g) => [g.id, g.name]));
-  const paidBy = new Map(paid.map((p) => [p.accountId, Number(p.total)]));
+  const principalIn = (id: string, after: string) => paid.filter((p) => p.type === "loan" && p.accountId === id && p.date > after).reduce((sum, p) => sum + p.amountMinor, 0);
+  const interestOut = (name: string, after: string) => paid.filter((p) => p.type !== "loan" && p.description === `Interest: ${name}` && p.date > after).reduce((sum, p) => sum + p.amountMinor, 0);
   return rows
     .map((a): AccountView => {
       const balance = balances.get(a.id) ?? 0;
@@ -97,7 +108,12 @@ export async function loadAccountViews(db: Db, householdId: string, today: strin
         const inst = a.installmentMinor ?? 0;
         const left = inst ? monthsLeft(owed, rate, inst) : null;
         const thisDue = `${month}-${String(Math.min(Math.max(1, a.installmentDay ?? 1), 28)).padStart(2, "0")}`;
-        const settled = (paidBy.get(a.id) ?? 0) > 0 || (a.openingBalanceDate !== null && a.openingBalanceDate >= thisDue);
+        // A payment counts toward this month's installment unless it was the last one paid late:
+        // anything from two weeks after the previous due date on. Principal and interest both count.
+        const windowFrom = addDays(addMonths(thisDue, -1), 14);
+        const toward = principalIn(a.id, windowFrom) + interestOut(a.name, windowFrom);
+        const unit = 100;
+        const settled = (inst > 0 && toward >= inst - unit) || (!inst && toward > 0) || (a.openingBalanceDate !== null && a.openingBalanceDate >= thisDue);
         const due = inst ? (settled ? addMonths(thisDue, 1) : thisDue) : null;
         loan = {
           owedMinor: owed,
@@ -107,7 +123,8 @@ export async function loadAccountViews(db: Db, householdId: string, today: strin
           payoffMonth: left !== null && due ? addMonths(due, Math.max(0, left - 1)).slice(0, 7) : a.endDate ? a.endDate.slice(0, 7) : null,
           interestLeftMinor: inst ? interestLeft(owed, rate, inst) : rate === 0 ? 0 : null,
           nextInterestMinor: splitPayment(owed, rate, inst || owed).interestMinor,
-          paidThisMonthMinor: paidBy.get(a.id) ?? 0,
+          paidThisMonthMinor: principalIn(a.id, addDays(from, -1)),
+          dueThisMonthMinor: inst && !settled && owed > 0 ? Math.max(0, inst - toward) : 0,
         };
       }
       return {
@@ -139,13 +156,16 @@ export type LoanCommitments = {
 export function loanCommitments(accounts: AccountView[]): LoanCommitments {
   const out: LoanCommitments = { monthlyMinor: 0, monthlyInterestMinor: 0, dueThisMonthMinor: 0, paidThisMonthMinor: 0, releases: [] };
   for (const a of accounts) {
-    if (a.closedAt || a.type !== "loan" || !a.loan || a.loan.owedMinor <= 0) continue;
+    if (a.type !== "loan" || !a.loan) continue;
+    // Principal repaid this month leaves the month's money whether or not the loan is now cleared
+    // or has a fixed installment (a friendly loan paid back in a lump).
+    out.paidThisMonthMinor += a.loan.paidThisMonthMinor;
+    if (a.closedAt || a.loan.owedMinor <= 0) continue;
     const inst = a.installmentMinor ?? 0;
     if (!inst) continue;
     out.monthlyMinor += inst;
     out.monthlyInterestMinor += a.loan.nextInterestMinor;
-    out.paidThisMonthMinor += a.loan.paidThisMonthMinor;
-    if (!a.loan.settledThisMonth) out.dueThisMonthMinor += inst;
+    out.dueThisMonthMinor += a.loan.dueThisMonthMinor;
     if (a.loan.payoffMonth) out.releases.push({ accountId: a.id, name: a.name, fromMonth: shiftMonth(a.loan.payoffMonth, 1), amountMinor: inst });
   }
   return out;
@@ -199,6 +219,8 @@ export type GoalView = {
   paidMinor: number;
   savedFrom: "accounts" | "records";
   accounts: { id: string; name: string; type: string; balanceMinor: number }[];
+  /** Part of the price to borrow when it is bought. */
+  loan: { amountMinor: number; rateBp: number; months: number } | null;
   parts: GoalPart[];
 };
 
@@ -242,6 +264,7 @@ export async function loadGoals(db: Db, householdId: string, today: string, opts
       paidMinor: paid,
       savedFrom: fromAccounts ? "accounts" : "records",
       accounts,
+      loan: g.loanMinor && g.loanMonths ? { amountMinor: g.loanMinor, rateBp: g.loanRateBp ?? 0, months: g.loanMonths } : null,
       parts: parts.filter((p) => p.goalId === g.id).map((p) => ({ id: p.id, name: p.name, amountMinor: p.amountMinor, sort: p.sort, doneAt: p.doneAt })),
     };
   });
@@ -260,7 +283,14 @@ export function toPlanGoals(goals: GoalView[]): PlanGoal[] {
       monthlyMinor: g.monthlyPlanMinor,
       wantedBy: g.wantedBy,
       parts: g.parts.map((p) => ({ name: p.name, amountMinor: p.amountMinor })),
+      loan: g.loan,
     }));
+}
+
+/** Money moments for the plan: one-off or yearly money in (+) or out (−). */
+export async function loadPlanEvents(db: Db, householdId: string): Promise<(PlanEvent & { id: string; note: string | null })[]> {
+  const rows = await db.query.planEvents.findMany({ where: eq(schema.planEvents.householdId, householdId), orderBy: [asc(schema.planEvents.month), asc(schema.planEvents.createdAt)] });
+  return rows.map((e) => ({ id: e.id, name: e.name, month: e.month, amountMinor: e.amountMinor, yearly: e.yearly, untilMonth: e.untilMonth, goalId: e.goalId, note: e.note }));
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +307,7 @@ export type MonthlyBasis = { source: "book" | "typical" | "none"; months: number
 export async function monthlyBasis(db: Db, householdId: string, currentMonth: string): Promise<MonthlyBasis> {
   const first = monthRange(shiftMonth(currentMonth, -3)).from;
   const last = monthRange(shiftMonth(currentMonth, -1)).to;
-  const [categories, txs, household] = await Promise.all([
+  const [categories, txs, household, starts] = await Promise.all([
     db.query.categories.findMany({ where: eq(schema.categories.householdId, householdId) }),
     db
       .select({
@@ -290,9 +320,22 @@ export async function monthlyBasis(db: Db, householdId: string, currentMonth: st
       .from(schema.transactions)
       .where(and(eq(schema.transactions.householdId, householdId), between(schema.transactions.date, first, last), isNull(schema.transactions.voidedAt), onEverydayAccounts())),
     db.query.households.findFirst({ where: eq(schema.households.id, householdId), columns: { typicalIncomeMinor: true, typicalSpendMinor: true } }),
+    // When the book began: the earliest starting balance on an everyday account.
+    db
+      .select({ first: sql<string | null>`min(${schema.accounts.openingBalanceDate})` })
+      .from(schema.accounts)
+      .where(and(eq(schema.accounts.householdId, householdId), inArray(schema.accounts.type, ["checking", "savings", "cash", "wallet", "credit"]))),
   ]);
+  // Only whole months count: a month the book began partway through would read as a thin month.
+  const opened = starts[0]?.first ?? null;
+  const firstTx = txs.reduce<string | null>((m, t) => (m === null || t.date < m ? t.date : m), null);
+  const bookStart = opened ? addDays(opened, 1) : firstTx;
   const byMonth = new Map<string, typeof txs>();
-  for (const t of txs) byMonth.set(t.date.slice(0, 7), [...(byMonth.get(t.date.slice(0, 7)) ?? []), t]);
+  for (const t of txs) {
+    const m = t.date.slice(0, 7);
+    if (bookStart && `${m}-01` < bookStart) continue;
+    byMonth.set(m, [...(byMonth.get(m) ?? []), t]);
+  }
   const typed = household?.typicalIncomeMinor ? { income: household.typicalIncomeMinor, spend: household.typicalSpendMinor ?? 0 } : null;
   if (byMonth.size < 2 && typed) return { source: "typical", months: byMonth.size, incomeMinor: typed.income, spendMinor: typed.spend };
   if (!byMonth.size) return { source: "none", months: 0, incomeMinor: 0, spendMinor: 0 };

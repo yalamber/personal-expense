@@ -51,6 +51,29 @@ describe("the generic alert parser", () => {
   });
 });
 
+describe("alerts laid out as a table or label lines", () => {
+  it("reads a table: type, amount in its own cell, date and remarks", async () => {
+    const html = "<html><body><p>Dear Customer,</p><p>A transaction has been made on your account.</p><table><tr><td>Account Number</td><td>01010XXXXXX89</td></tr><tr><td>Transaction Type</td><td>Debit</td></tr><tr><td>Amount (NPR)</td><td>1,500.00</td></tr><tr><td>Transaction Date</td><td>26-Oct-2026 14:03</td></tr><tr><td>Remarks</td><td>ESEWA LOAD 9841XXXXXX</td></tr><tr><td>Available Balance (NPR)</td><td>1,23,456.78</td></tr></table></body></html>";
+    const lines = await parse(base, html, "text/html");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ kind: "out", amountMinor: 150_000, date: "2026-10-26", description: "ESEWA LOAD 9841XXXXXX" });
+  });
+
+  it("reads label lines with Dr/Cr and a slash date", async () => {
+    const lines = await parse({ ...base, Subject: "Account Activity" }, "Txn Amount: NPR 25,000.00 Cr\r\nTxn Date: 2026/10/07\r\nNarration: SALARY OCT\r\nBalance: NPR 2,10,000.00");
+    expect(lines[0]).toMatchObject({ kind: "in", amountMinor: 2_500_000, date: "2026-10-07", description: "SALARY OCT" });
+  });
+
+  it("knows a withdrawal amount is money out without a type line", async () => {
+    const lines = await parse(base, "Withdrawal Amount: Rs. 5,000\r\nDate: 2026-10-20\r\nDetails: ATM KATHMANDU");
+    expect(lines[0]).toMatchObject({ kind: "out", amountMinor: 500_000, description: "ATM KATHMANDU" });
+  });
+
+  it("does not take a balance or a card offer for a transaction", async () => {
+    expect(await parse(base, "Available Balance: NPR 50,000.00\r\nApply for our credit card today.")).toEqual([]);
+  });
+});
+
 describe("findDate and readAlert", () => {
   it("prefers ISO, then day-first, then written months", () => {
     expect(findDate("on 2026-10-26 at 14:03")?.date).toBe("2026-10-26");

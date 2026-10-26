@@ -187,6 +187,21 @@ t2 = (await call("GET", `${H}/today`, null, 200)).data;
 ok(t2.mail.newSender === 0, "nothing from a new sender is left");
 st = await deliver("postmaster@mail-x.google.com", mail("Nabil Bank <txn-alert@nabilbank.com>", "Transaction Alert", "Your one time password is 482913. Do not share it."));
 ok(st.status === "unparsed" && /nothing in this email read like a transaction/.test(st.error), "an email with no transaction in it says so instead of failing");
+const otp = st.id;
+ok((await call("POST", `${H}/statements/${otp}/reread`, null, 200)).data.ok, "an unread email can be read again");
+await sleep(1200);
+st = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id === otp);
+ok(st.status === "unparsed", "and still finds nothing in a password email");
+const readOne = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.status === "review");
+ok((await call("POST", `${H}/statements/${readOne.id}/reread`)).status === 409, "an email already read is not read twice");
+
+// A table-style alert, as many banks send.
+const table = ["From: Nabil Bank <txn-alert@nabilbank.com>", `To: stmt+${token}@statements.leadbase.stream`, "Subject: Transaction Alert", `Date: ${new Date().toUTCString()}`, "Message-ID: <table-1@e2e.example>", "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "",
+  "<p>Dear Customer,</p><table><tr><td>Transaction Type</td><td>Debit</td></tr><tr><td>Amount (NPR)</td><td>2,750.00</td></tr><tr><td>Transaction Date</td><td>24-Oct-2026</td></tr><tr><td>Remarks</td><td>NTC TOPUP</td></tr><tr><td>Available Balance (NPR)</td><td>48,000.00</td></tr></table>"].join("\r\n");
+st = await deliver("postmaster@mail-wr1-x436.google.com", table);
+ok(st.status === "review" && st.parserKey === "alert-text", "a table-style alert is read");
+review = (await call("GET", `${H}/review`, null, 200)).data;
+ok(review.some((l) => Math.abs(l.amountMinor) === 275000 && /NTC TOPUP/.test(l.description ?? "")), "and its Rs 2,750 to NTC TOPUP waits for a person");
 
 console.log(`\nAll good. Household ${hh}`);
 console.log(JSON.stringify({ hh, cookie: state.cookie }));

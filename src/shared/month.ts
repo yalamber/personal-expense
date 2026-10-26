@@ -4,7 +4,8 @@
  *
  *   income already in the book this month
  *   − spent so far
- *   − set aside for goals, loan installments and the bills still to come
+ *   − set aside for goals, loan installments, the bills still to come, and other saving
+ *     (shares, a deposit made this month) that is not a goal's
  *   = for everyday things, ÷ days to payday = a day
  *
  * Only money that has arrived counts. Income listed under Every month and not yet in the book is
@@ -21,6 +22,8 @@ export type MonthInput = {
   loansMinor: number;
   /** Every-month bills not yet in the book. */
   billsMinor: number;
+  /** Money put into savings this period outside the goals (shares, a new deposit). */
+  savedOtherMinor?: number;
   daysLeft: number;
   minorDigits: number;
 };
@@ -45,7 +48,7 @@ export type MonthMath = {
 
 export function monthMath(i: MonthInput): MonthMath {
   const incomeMinor = Math.max(0, i.loggedInMinor);
-  const committedMinor = i.goalsMinor + i.loansMinor + i.billsMinor;
+  const committedMinor = i.goalsMinor + i.loansMinor + i.billsMinor + Math.max(0, i.savedOtherMinor ?? 0);
   const everydayLeftMinor = incomeMinor - i.spentMinor - committedMinor;
   const unit = 10 ** i.minorDigits;
   const perDayMinor = Math.floor(Math.max(0, everydayLeftMinor) / Math.max(1, i.daysLeft) / unit) * unit;

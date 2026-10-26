@@ -41,3 +41,18 @@ describe("fixed deposits", () => {
     expect(rateLabel(1025)).toBe("10.25%");
   });
 });
+
+describe("fixes from the audit", () => {
+  it("a deposit starting at a month's end keeps its whole term", () => {
+    expect(termMonths("2025-11-30", addMonths("2025-11-30", 3))).toBe(3);
+    expect(termMonths("2026-08-31", addMonths("2026-08-31", 6))).toBe(6);
+    expect(termMonths("2028-02-29", addMonths("2028-02-29", 12))).toBe(12);
+    expect(termMonths("2026-01-15", "2026-04-14")).toBe(2);
+  });
+  it("a deposit paying out quarterly still shows the last quarter's interest on and after maturity", () => {
+    const d = { principalMinor: 50_000_000, rateBp: 850, start: "2026-01-15", maturity: "2027-01-15", payout: "quarterly" as const };
+    const atMaturity = accruedInterest(d, "2027-01-15");
+    expect(atMaturity).toBe(Math.round((50_000_000 * 850) / 10_000 * (92 / 365)));
+    expect(accruedInterest(d, "2027-02-01")).toBe(atMaturity);
+  });
+});

@@ -2167,3 +2167,19 @@ dl.terms dd {
 .khata-row .due.late {
   color: var(--rust);
 }
+
+/* ---- Planning a big purchase ---------------------------------------------------- */
+
+.way {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px dashed var(--line);
+}
+.way > .stack {
+  flex: 1 1 260px;
+  min-width: 0;
+}

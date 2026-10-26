@@ -57,9 +57,12 @@ const suites = [
   { name: "api-start", file: "api-start.mjs" },
   { name: "api-khata", file: "api-khata.mjs", keep: "khata" },
   { name: "api-recurring", file: "api-recurring.mjs", keep: "every" },
+  { name: "api-plan", file: "api-plan.mjs", keep: "plan" },
+  { name: "api-accuracy", file: "api-accuracy.mjs" },
   { name: "seed", file: "seed.mjs", keep: "rich" },
   { name: "browser-offline", file: "browser-offline.mjs", browser: true, args: () => [JSON.stringify(handoff.khata)] },
   { name: "browser-pages", file: "browser-pages.mjs", browser: true, args: () => [JSON.stringify(handoff.rich), ...(handoff.every ? [JSON.stringify(handoff.every)] : [])] },
+  { name: "browser-plan", file: "browser-plan.mjs", browser: true, args: () => [JSON.stringify(handoff.plan ?? null), JSON.stringify(handoff.rich ?? null)] },
 ];
 
 const results = [];

@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { todayIn } from "../../../shared/dates";
 import { daysBetween } from "../../../shared/deposit";
+import { payMore, payoffMonth } from "../../../shared/loan";
+import { parseAmountToMinor } from "../../../shared/money";
+import { monthName, spanLabel } from "../../../shared/plan";
 import { Meter } from "../charts";
 import { worth } from "../../../shared/worth";
 import { api, ApiError, paths, type Account, type Goal, type Household } from "../api";
@@ -10,6 +13,7 @@ import { onLinkClick } from "../router";
 import { Icon, formatMoney, shortDate } from "../ui";
 import { AccountAmount, AccountForm, GROUPS, MaturityForm, RepaymentForm, accountLine, typeInfo } from "./accountsKit";
 import { CsvImport } from "./CsvImport";
+import { wholeMoney } from "./planKit";
 
 /**
  * "What does the bank say?" The first figure starts the book for the account; later ones are
@@ -62,7 +66,60 @@ function BalanceCheck({ household, account, onDone }: { household: Household; ac
   );
 }
 
-type Panel = "edit" | "check" | "repay" | "mature" | "csv" | null;
+type Panel = "edit" | "check" | "repay" | "mature" | "csv" | "more" | null;
+
+/** What paying a loan faster does: months and interest saved, from extra each month or a sum now. */
+function PayMore({ household, account }: { household: Household; account: Account }) {
+  const cur = household.currency;
+  const [monthly, setMonthly] = useState("");
+  const [lump, setLump] = useState("");
+  const owed = account.loan?.owedMinor ?? Math.abs(account.balanceMinor);
+  const inst = account.installmentMinor ?? 0;
+  const extra = { monthlyMinor: parseAmountToMinor(monthly, cur) ?? 0, lumpMinor: parseAmountToMinor(lump, cur) ?? 0 };
+  const r = payMore(owed, account.rateBp ?? 0, inst, extra);
+  const any = extra.monthlyMinor > 0 || extra.lumpMinor > 0;
+  const today = todayIn(household.timezone);
+  const endOf = (months: number) => monthName(payoffMonth(today, account.installmentDay ?? 1, months));
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <div className="row" style={{ alignItems: "flex-end" }}>
+        <label style={{ flex: "1 1 160px" }}>
+          Extra each month
+          <input inputMode="decimal" value={monthly} onChange={(e) => setMonthly(e.target.value)} placeholder="0" />
+        </label>
+        <label style={{ flex: "1 1 160px" }}>
+          Or a sum now
+          <input inputMode="decimal" value={lump} onChange={(e) => setLump(e.target.value)} placeholder="0" />
+        </label>
+      </div>
+      {!inst ? (
+        <span className="small muted">Add the installment (Edit) to see this.</span>
+      ) : !r.before ? (
+        <span className="small warn">The installment does not cover the interest, so the loan never shrinks.</span>
+      ) : (
+        <dl className="terms">
+          <dt>As it is</dt>
+          <dd>
+            paid off {endOf(r.before.months)} · {wholeMoney(r.before.interestMinor, cur)} interest left
+          </dd>
+          {any && r.after && (
+            <>
+              <dt>Paying more</dt>
+              <dd>
+                paid off <strong>{endOf(r.after.months)}</strong> · {wholeMoney(r.after.interestMinor, cur)} interest
+              </dd>
+              <dt>Saved</dt>
+              <dd style={{ color: "var(--green-deep)" }}>
+                <strong>{spanLabel(r.before.months - r.after.months)} sooner</strong>, {wholeMoney(Math.max(0, r.before.interestMinor - r.after.interestMinor), cur)} less interest
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
+      <span className="small muted">An estimate on the reducing balance. Some banks charge a fee for paying early; ask yours before you do.</span>
+    </div>
+  );
+}
 
 /** Accounts: where the money is and what is owed, grouped, with today's balances. */
 export function Accounts({ household, version, onChanged }: { household: Household; version: number; onChanged: () => void }) {
@@ -221,6 +278,11 @@ export function Accounts({ household, version, onChanged }: { household: Househo
                         {a.type === "loan" ? "Log a payment" : "Money came back"}
                       </button>
                     )}
+                    {a.type === "loan" && (a.rateBp ?? 0) > 0 && (
+                      <button type="button" className="link small" onClick={() => toggle(a.id, "more")}>
+                        What if we pay more?
+                      </button>
+                    )}
                     {a.type === "deposit" && <button type="button" className="link small" onClick={() => toggle(a.id, "mature")}>Renew or close</button>}
                     {a.type !== "deposit" && a.type !== "lent" && a.type !== "cash" && (
                       <button type="button" className="link small" onClick={() => toggle(a.id, "check")}>Check balance</button>
@@ -237,6 +299,7 @@ export function Accounts({ household, version, onChanged }: { household: Househo
                     {open.panel === "check" && <BalanceCheck household={household} account={a} onDone={() => onChanged()} />}
                     {open.panel === "repay" && <RepaymentForm household={household} account={a} accounts={rows ?? []} onDone={() => onChanged()} />}
                     {open.panel === "mature" && <MaturityForm household={household} account={a} accounts={rows ?? []} onDone={() => { setOpen(null); onChanged(); }} />}
+                    {open.panel === "more" && <PayMore household={household} account={a} />}
                     {open.panel === "csv" && <CsvImport household={household} account={a} onCancel={() => setOpen(null)} onDone={() => { setOpen(null); onChanged(); }} />}
                   </div>
                 )}

@@ -254,8 +254,28 @@ accountRoutes.post("/accounts/:accountId/repayment", requireWriter, async (c) =>
   const memberId = c.get("member").id;
 
   if (account.type === "lent") {
-    await createTransfer(db, { householdId: household.id, fromAccountId: account.id, toAccountId: other.id, amountMinor: paid, date, note, memberId, description: `Repaid: ${account.name}` });
-    return c.json({ principalMinor: paid, interestMinor: 0 }, 201);
+    // What comes back beyond what is still owed is interest: income, not money moving back.
+    const owedToUs = Math.max(0, (await accountBalances(db, household.id, date)).get(account.id) ?? 0);
+    const principal = Math.min(paid, owedToUs);
+    const interest = paid - principal;
+    if (principal > 0) await createTransfer(db, { householdId: household.id, fromAccountId: account.id, toAccountId: other.id, amountMinor: principal, date, note, memberId, description: `Repaid: ${account.name}` });
+    if (interest > 0) {
+      await db.insert(schema.transactions).values(
+        transactionValues({
+          householdId: household.id,
+          accountId: other.id,
+          date,
+          amountMinor: interest,
+          direction: "in",
+          categoryId: await categoryNamed(c, /interest/i, "income"),
+          description: `Interest: ${account.name}`,
+          note,
+          paidByMemberId: memberId,
+          source: "manual",
+        }),
+      );
+    }
+    return c.json({ principalMinor: principal, interestMinor: interest }, 201);
   }
 
   const owed = Math.max(0, -((await accountBalances(db, household.id, date)).get(account.id) ?? 0));
@@ -489,7 +509,8 @@ accountRoutes.post("/accounts/:accountId/bank-balance", requireWriter, async (c)
   const value = OWED.includes(account.type) ? -Math.abs(typed) : typed;
   const startBook = body.startBook || account.openingBalanceMinor === null || !account.openingBalanceDate;
   const patch: Partial<typeof schema.accounts.$inferInsert> = { lastStatementBalanceMinor: value, lastStatementAt: date, balanceSnoozedFor: null };
-  if (startBook) Object.assign(patch, { openingBalanceMinor: value, openingBalanceDate: date });
+  // Like the account form: a balance for today means "right now", so today's entries still count.
+  if (startBook) Object.assign(patch, { openingBalanceMinor: value, openingBalanceDate: date === todayIn(household.timezone) ? addDays(date, -1) : date });
   await c.get("db").update(schema.accounts).set(patch).where(eq(schema.accounts.id, account.id));
   const book = startBook ? value : await bookBalance(c.get("db"), { id: account.id, openingBalanceMinor: account.openingBalanceMinor, openingBalanceDate: account.openingBalanceDate }, date);
   return c.json({ bankMinor: value, bookMinor: book, matches: book === value, startedBook: startBook });

@@ -9,7 +9,8 @@ import { isDate, shiftMonth, todayIn } from "../../../shared/dates";
 import { formatMinor, parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
-import { loadAccountViews, loadGoals, loanCommitments, monthlyBasis, spareAfter } from "../../ledger/overview";
+import { loadAccountViews, loadGoals, loadPlanEvents, loanCommitments, monthlyBasis, spareAfter } from "../../ledger/overview";
+import { parseRate } from "../../../shared/deposit";
 import { createTransfer, transactionValues } from "../../ledger/transactions";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
@@ -27,6 +28,22 @@ function money(c: AppContext, value: unknown): number | null {
   if (value === undefined || value === null || String(value).trim() === "") return 0;
   const minor = parseAmountToMinor(String(value), c.get("household").currency);
   return minor === null || minor < 0 ? null : minor;
+}
+
+type LoanBody = { amount?: string; rate?: string; years?: number; months?: number } | null;
+
+/** A goal's loan plan from the request: an amount, a yearly rate and a term; null clears it. */
+function loanFields(c: AppContext, loan: LoanBody | undefined): { error: string } | { values: Pick<typeof schema.goals.$inferInsert, "loanMinor" | "loanRateBp" | "loanMonths"> } | null {
+  if (loan === undefined) return null;
+  if (loan === null) return { values: { loanMinor: null, loanRateBp: null, loanMonths: null } };
+  const amount = money(c, loan.amount);
+  if (!amount) return { error: "how much would you borrow?" };
+  const rateText = String(loan.rate ?? "").trim();
+  const rate = rateText === "" || Number(rateText) === 0 ? 0 : parseRate(rateText);
+  if (rate === null) return { error: "enter the loan's yearly interest rate, like 11" };
+  const months = Math.round(loan.months ?? (loan.years ?? 0) * 12);
+  if (!Number.isFinite(months) || months < 1 || months > 360) return { error: "the loan's term is 1 month to 30 years" };
+  return { values: { loanMinor: amount, loanRateBp: rate, loanMonths: months } };
 }
 
 async function findGoal(c: AppContext, goalId: string) {
@@ -65,7 +82,78 @@ goalRoutes.get("/plan", async (c) => {
     basis,
     loans,
     spareMinor: spareAfter(basis, plannedMinor, loans),
+    events: await loadPlanEvents(db, household.id),
   });
+});
+
+// ---------------------------------------------------------------------------
+// Money moments: bonuses, maturing deposits, weddings, fees
+// ---------------------------------------------------------------------------
+
+type EventBody = { name?: string; direction?: string; amount?: string; month?: string; yearly?: boolean; untilMonth?: string | null; goalId?: string | null; note?: string };
+
+async function eventFields(c: AppContext, body: EventBody, partial: boolean): Promise<{ error: string } | { values: Partial<typeof schema.planEvents.$inferInsert> }> {
+  const v: Partial<typeof schema.planEvents.$inferInsert> = {};
+  if (body.name !== undefined || !partial) {
+    const name = (body.name ?? "").trim().slice(0, 80);
+    if (!name) return { error: "give it a name, such as Dashain bonus or the wedding" };
+    v.name = name;
+  }
+  if (body.amount !== undefined || !partial) {
+    const amount = money(c, body.amount);
+    if (!amount) return { error: "enter the amount" };
+    v.amountMinor = body.direction === "out" ? -amount : amount;
+  } else if (body.direction === "out" || body.direction === "in") {
+    return { error: "send the amount with its direction" };
+  }
+  if (body.month !== undefined || !partial) {
+    if (!isWantedBy(body.month ?? "")) return { error: "the month must be YYYY-MM" };
+    v.month = body.month!;
+  }
+  if (typeof body.yearly === "boolean") v.yearly = body.yearly;
+  if (body.untilMonth !== undefined) {
+    if (body.untilMonth && !isWantedBy(body.untilMonth)) return { error: "the last year must be YYYY-MM" };
+    v.untilMonth = body.untilMonth || null;
+  }
+  if (body.goalId !== undefined) {
+    if (body.goalId && !(await findGoal(c, body.goalId))) return { error: "goal not found" };
+    v.goalId = body.goalId || null;
+  }
+  if (typeof body.note === "string") v.note = body.note.trim().slice(0, 200) || null;
+  return { values: v };
+}
+
+goalRoutes.get("/plan-events", async (c) => c.json(await loadPlanEvents(c.get("db"), c.get("household").id)));
+
+goalRoutes.post("/plan-events", requireWriter, async (c) => {
+  const fields = await eventFields(c, await readJson<EventBody>(c), false);
+  if ("error" in fields) return c.json({ error: fields.error }, 400);
+  const id = newId();
+  await c.get("db").insert(schema.planEvents).values({ ...fields.values, id, householdId: c.get("household").id } as typeof schema.planEvents.$inferInsert);
+  return c.json({ id }, 201);
+});
+
+async function findEvent(c: AppContext) {
+  return c.get("db").query.planEvents.findFirst({ where: and(eq(schema.planEvents.id, c.req.param("eventId") ?? ""), eq(schema.planEvents.householdId, c.get("household").id)) });
+}
+
+goalRoutes.patch("/plan-events/:eventId", requireWriter, async (c) => {
+  const event = await findEvent(c);
+  if (!event) return c.json({ error: "not found" }, 404);
+  const body = await readJson<EventBody>(c);
+  // Changing direction alone flips the sign of the amount already there.
+  if ((body.direction === "in" || body.direction === "out") && body.amount === undefined) body.amount = String(Math.abs(event.amountMinor) / 100);
+  const fields = await eventFields(c, body, true);
+  if ("error" in fields) return c.json({ error: fields.error }, 400);
+  if (Object.keys(fields.values).length) await c.get("db").update(schema.planEvents).set(fields.values).where(eq(schema.planEvents.id, event.id));
+  return c.json({ ok: true });
+});
+
+goalRoutes.delete("/plan-events/:eventId", requireWriter, async (c) => {
+  const event = await findEvent(c);
+  if (!event) return c.json({ error: "not found" }, 404);
+  await c.get("db").delete(schema.planEvents).where(eq(schema.planEvents.id, event.id));
+  return c.json({ ok: true });
 });
 
 /** An account chosen to hold a goal's money also counts toward it, unless it already serves another goal. */
@@ -91,6 +179,7 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
     note?: string;
     linkedAccountId?: string | null;
     parts?: { name?: string; amount?: string }[];
+    loan?: LoanBody;
   }>(c);
   const name = (body.name ?? "").trim().slice(0, 80);
   if (!name) return c.json({ error: "give the goal a name" }, 400);
@@ -112,6 +201,9 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
   const saved = money(c, body.saved);
   const paid = money(c, body.paid);
   if (monthly === null || saved === null || paid === null) return c.json({ error: "amounts must be positive" }, 400);
+  const loan = loanFields(c, body.loan);
+  if (loan && "error" in loan) return c.json({ error: loan.error }, 400);
+  if (loan && (loan.values.loanMinor ?? 0) >= target) return c.json({ error: "the loan has to be less than the price" }, 400);
   if (body.linkedAccountId) {
     const a = await db.query.accounts.findFirst({ where: and(eq(schema.accounts.id, body.linkedAccountId), eq(schema.accounts.householdId, household.id)), columns: { id: true } });
     if (!a) return c.json({ error: "account not found" }, 404);
@@ -131,6 +223,7 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
       monthlyPlanMinor: monthly,
       note: (body.note ?? "").trim() || null,
       linkedAccountId: body.linkedAccountId ?? null,
+      ...(loan ? loan.values : {}),
     }),
     ...parts.map((p, i) => db.insert(schema.goalParts).values({ id: newId(), householdId: household.id, goalId, name: p.name, amountMinor: p.amountMinor, sort: i })),
   ];
@@ -152,8 +245,14 @@ goalRoutes.post("/goals", requireWriter, async (c) => {
 goalRoutes.patch("/goals/:goalId", requireWriter, async (c) => {
   const goal = await findGoal(c, c.req.param("goalId"));
   if (!goal || goal.archivedAt) return c.json({ error: "not found" }, 404);
-  const body = await readJson<{ name?: string; kind?: string; target?: string; wantedBy?: string | null; monthly?: string; note?: string; linkedAccountId?: string | null; completed?: boolean }>(c);
+  const body = await readJson<{ name?: string; kind?: string; target?: string; wantedBy?: string | null; monthly?: string; note?: string; linkedAccountId?: string | null; completed?: boolean; loan?: LoanBody }>(c);
   const patch: Partial<typeof schema.goals.$inferInsert> = {};
+  const loan = loanFields(c, body.loan);
+  if (loan && "error" in loan) return c.json({ error: loan.error }, 400);
+  if (loan) {
+    if ((loan.values.loanMinor ?? 0) >= goal.targetMinor) return c.json({ error: "the loan has to be less than the price" }, 400);
+    Object.assign(patch, loan.values);
+  }
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim().slice(0, 80);
   if (typeof body.kind === "string" && (KINDS as readonly string[]).includes(body.kind)) patch.kind = body.kind as Kind;
   if (body.wantedBy === null) patch.targetDate = null;

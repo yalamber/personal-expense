@@ -24,7 +24,7 @@ const monthIndex = (m: string) => ["jan", "feb", "mar", "apr", "may", "jun", "ju
 /** The first date in the text that is a plausible Gregorian date; Bikram Sambat years are skipped. */
 export function findDate(text: string, fallback?: Date | null): { date: string; fromText: boolean } | null {
   const plausible = (y: number, m: number, d: number) => y >= 2000 && y <= 2069 && m >= 1 && m <= 12 && d >= 1 && d <= 31;
-  const iso = [...text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)].find((m) => plausible(+m[1]!, +m[2]!, +m[3]!));
+  const iso = [...text.matchAll(/\b(\d{4})[-/](\d{2})[-/](\d{2})\b/g)].find((m) => plausible(+m[1]!, +m[2]!, +m[3]!));
   if (iso) return { date: `${iso[1]}-${iso[2]}-${iso[3]}`, fromText: true };
   // Day first, as written in Nepal and India: 26/10/2026, 26-10-2026, 26.10.2026.
   const dmy = [...text.matchAll(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/g)].find((m) => plausible(+m[3]!, +m[2]!, +m[1]!));
@@ -38,6 +38,45 @@ export function findDate(text: string, fallback?: Date | null): { date: string; 
 }
 
 type Found = { amountMinor: number; kind: "out" | "in"; sentence: string; description: string | null };
+
+const toMinor = (raw: string) => Math.round(Number(raw.replace(/,/g, "")) * 100);
+const kindWord = (w: string): "out" | "in" | null => (/^(debit|dr|withdrawal|withdrawn|paid|purchase)/i.test(w) ? "out" : /^(credit|cr|deposit|received|refund)/i.test(w) ? "in" : null);
+
+/**
+ * Alerts laid out as a table or as label lines ("Transaction Type: Debit", "Amount (NPR): 1,500.00",
+ * "Remarks: ESEWA LOAD"), which banks send as often as sentences. Read line by line.
+ */
+export function readLabelled(text: string): Found | null {
+  const lines = text.split(/\n+/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+  let amountMinor = 0;
+  let kind: "out" | "in" | null = null;
+  let description: string | null = null;
+  let source = "";
+  for (const line of lines) {
+    if (/balance|limit/i.test(line)) continue;
+    const amt = line.match(/^\W*(?:(txn|transaction|debit(?:ed)?|credit(?:ed)?|withdrawal|deposit)\s*)?amount\b\s*(?:\((?:npr|nrs|rs\.?|inr|usd)\))?\s*[:\-–]?\s*(?:npr|nrs\.?|rs\.?|रु\.?|inr)?\s*([\d,]+(?:\.\d{1,2})?)(?:\s*\(?(dr|cr)\)?)?/i);
+    if (amt && !amountMinor) {
+      amountMinor = toMinor(amt[2]!);
+      kind = kind ?? (amt[1] ? kindWord(amt[1]) : null) ?? (amt[3] ? kindWord(amt[3]) : null);
+      source = line;
+      continue;
+    }
+    const type = line.match(/^\W*(?:transaction|txn|tran)\.?\s*type\s*[:\-–]?\s*(debit|dr|withdrawal|credit|cr|deposit)\b/i) ?? line.match(/^\W*(?:dr\s*\/\s*cr|debit\s*\/\s*credit)\s*[:\-–]?\s*(dr|cr|debit|credit)\b/i);
+    if (type) kind = kindWord(type[1]!);
+    const desc = line.match(/^\W*(remarks?|narration|particulars?|description|details?|purpose|merchant|txn\s*desc(?:ription)?)\s*[:\-–]?\s+(.{2,140})$/i);
+    if (desc && !description) description = desc[2]!.replace(/[.;,\s]+$/, "").trim() || null;
+  }
+  if (!amountMinor || amountMinor <= 0) return null;
+  if (!kind) {
+    // No type line: the first debit or credit word anywhere decides.
+    const flat = text.replace(/\s+/g, " ");
+    const out = flat.search(/\b(debited|debit(?!\s*card)|withdrawn|withdrawal)\b/i);
+    const inn = flat.search(/\b(credited|credit(?!\s*card)|deposited)\b/i);
+    kind = out >= 0 && (inn < 0 || out < inn) ? "out" : inn >= 0 ? "in" : null;
+  }
+  if (!kind) return null;
+  return { amountMinor, kind, sentence: lines.filter((l) => !/balance/i.test(l)).slice(0, 8).join(" · ").slice(0, 300) || source, description };
+}
 
 /** The transaction in a piece of alert text, or null when nothing reads like one. */
 export function readAlert(text: string): Found | null {
@@ -85,7 +124,8 @@ export const alertParser: StatementParser = {
   matches: ({ subject, from }) => SUBJECT.test(subject) && !/forwarding-noreply@google\.com/i.test(from),
   async parse(email: Email): Promise<ParsedLine[]> {
     const text = `${email.text ?? ""}\n${plainText(email.html ?? "")}`;
-    const found = readAlert(text);
+    // Sentences first ("has been debited by NPR 1,500"); then tables and label lines.
+    const found = readAlert(text) ?? readLabelled(text);
     if (!found) return [];
     const when = findDate(text, email.date ? new Date(email.date) : null);
     if (!when) return [];

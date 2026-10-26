@@ -42,7 +42,9 @@ export function addMonths(date: string, months: number): string {
 export function termMonths(start: string, maturity: string): number {
   const [sy, sm, sd] = start.split("-").map(Number) as [number, number, number];
   const [my, mm, md] = maturity.split("-").map(Number) as [number, number, number];
-  return (my - sy) * 12 + (mm - sm) - (md < sd ? 1 : 0);
+  // A maturity on the last day of a short month is a whole month on (30 Nov + 3 months = 28 Feb).
+  const lastOfMonth = new Date(Date.UTC(my, mm, 0)).getUTCDate();
+  return (my - sy) * 12 + (mm - sm) - (md < sd && md < lastOfMonth ? 1 : 0);
 }
 
 function grown(d: Deposit, days: number): number {
@@ -72,9 +74,11 @@ export function accruedInterest(d: Deposit, asOf: string): number {
   if (d.payout === "maturity") return Math.round(grown(d, daysBetween(d.start, until)) - d.principalMinor);
   const step = d.payout === "quarterly" ? 3 : 1;
   let last = d.start;
+  // A payout on its day is in the book; the one due on maturity day comes when the deposit is
+  // closed, so until then that last stretch still counts.
   for (let n = step; ; n += step) {
     const next = addMonths(d.start, n);
-    if (next > until) break;
+    if (next > until || next >= d.maturity) break;
     last = next;
   }
   return Math.round((d.principalMinor * d.rateBp) / 10_000 * (daysBetween(last, until) / 365));

@@ -9,11 +9,12 @@ import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 import { Lines, Meter, SERIES, Stacked, compact } from "../charts";
+import { MomentsCard, wholeMoney } from "./planKit";
 
 export function toPlanGoals(goals: Goal[]): PlanGoal[] {
   return goals
     .filter((g) => !g.completedAt)
-    .map((g) => ({ id: g.id, name: g.name, kind: g.kind, targetMinor: g.targetMinor, savedMinor: g.savedMinor, monthlyMinor: g.monthlyPlanMinor, wantedBy: g.wantedBy, parts: g.parts.map((p) => ({ name: p.name, amountMinor: p.amountMinor })) }));
+    .map((g) => ({ id: g.id, name: g.name, kind: g.kind, targetMinor: g.targetMinor, savedMinor: g.savedMinor, monthlyMinor: g.monthlyPlanMinor, wantedBy: g.wantedBy, parts: g.parts.map((p) => ({ name: p.name, amountMinor: p.amountMinor })), loan: g.loan }));
 }
 
 function tidy(minor: number, currency: string): number {
@@ -46,6 +47,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
   const [pool, setPool] = useState<number | null>(null);
   const [custom, setCustom] = useState("");
   const [rise, setRise] = useState(0);
+  const [growth, setGrowth] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cur = household.currency;
@@ -59,8 +61,8 @@ export function Plan({ household, version, onChanged }: { household: Household; 
   const amount = pool ?? current;
   const releases = useMemo(() => (withReleases ? (data?.loans.releases ?? []) : []), [data, withReleases]);
   const sim = useMemo(
-    () => (data && goals.length ? simulatePlan(goals, { startMonth: data.startMonth, poolMinor: amount, priceRisePerYear: rise, releases, trajectory: true }) : null),
-    [data, goals, amount, rise, releases],
+    () => (data && goals.length ? simulatePlan(goals, { startMonth: data.startMonth, poolMinor: amount, priceRisePerYear: rise, growthPerYear: growth, releases, events: data.events, trajectory: true }) : null),
+    [data, goals, amount, rise, growth, releases],
   );
 
   if (pq.error && !data) return <div className="error">{pq.error}</div>;
@@ -161,6 +163,9 @@ export function Plan({ household, version, onChanged }: { household: Household; 
     });
   }
 
+  const firstLateOutcome = outcomes.find((o) => o.doneMonth === null || (o.lateMonths ?? 0) > 0);
+  const firstLate = firstLateOutcome ? data.goals.find((g) => g.id === firstLateOutcome.id) ?? null : null;
+
   // A loan paid off is a milestone too: its installment joins the plan from the next month.
   for (const r of data.loans.releases) {
     miles.push({
@@ -178,6 +183,57 @@ export function Plan({ household, version, onChanged }: { household: Household; 
     });
   }
 
+  // A goal bought with a loan: the purchase, then the month the loan is repaid and its installment frees up.
+  for (const o of outcomes) {
+    if (!o.loan || !o.loan.startMonth) continue;
+    const g = data.goals.find((x) => x.id === o.id)!;
+    const bought = o.doneMonth === "now" ? data.startMonth : o.doneMonth!;
+    const i = miles.findIndex((m) => m.key === g.id);
+    if (i >= 0) {
+      miles[i] = {
+        ...miles[i]!,
+        title: `${g.name}: bought, ${formatMoney(o.loan.amountMinor, cur)} borrowed`,
+        chip: miles[i]!.chip,
+        note: `${formatMoney(o.needMinor, cur)} saved first, then ${wholeMoney(o.loan.emiMinor, cur)} a month from ${monthName(o.loan.startMonth)} to ${monthName(o.loan.endMonth!)} (${wholeMoney(o.loan.totalInterestMinor, cur)} interest). The installment comes out of what goes into the later goals.`,
+      };
+    }
+    const end = o.loan.endMonth!;
+    miles.push({
+      key: `loan-goal-${g.id}`,
+      order: end,
+      when: monthName(end),
+      late: false,
+      done: false,
+      href: `/h/${household.id}/plan/goals/${g.id}`,
+      title: `${g.name} loan repaid`,
+      chip: `+${wholeMoney(o.loan.emiMinor, cur)} a month`,
+      chipTone: "green",
+      note: `Bought ${bought === data.startMonth && o.doneMonth === "now" ? "now" : `in ${monthName(bought)}`}; from here its installment goes back into the goals.`,
+      Icon: Icon.unlock,
+    });
+  }
+
+  // Money moments: the next time each one happens.
+  for (const e of data.events) {
+    let next = e.month;
+    if (e.yearly) while (next < data.startMonth) next = `${Number(next.slice(0, 4)) + 1}${next.slice(4)}`;
+    if (next < data.startMonth || (e.untilMonth && next > e.untilMonth)) continue;
+    const into = e.goalId ? data.goals.find((g) => g.id === e.goalId)?.name : null;
+    miles.push({
+      key: `moment-${e.id}`,
+      order: next,
+      when: monthName(next),
+      late: false,
+      done: false,
+      href: `/h/${household.id}/plan#moments-h`,
+      title: e.name,
+      chip: `${e.amountMinor > 0 ? "+" : "−"}${formatMoney(Math.abs(e.amountMinor), cur)}${e.yearly ? " every year" : ""}`,
+      chipTone: e.amountMinor > 0 ? "green" : "amber",
+      note: e.amountMinor > 0 ? `Into ${into ?? "the first goal still being saved for"}.` : "Out of what goes into the goals; the dates after it move later.",
+      Icon: e.amountMinor > 0 ? Icon.unlock : Icon.other,
+    });
+  }
+
   // The road reads as a timeline: earliest first, whatever the funding order.
   miles.sort((a, b) => a.order.localeCompare(b.order));
   const road = sim?.trajectory ? roadChart(sim.trajectory, data.goals, outcomes) : null;
@@ -192,6 +248,14 @@ export function Plan({ household, version, onChanged }: { household: Household; 
         <p className="muted" style={{ margin: 0, maxWidth: "52em" }}>
           Goals are funded in this order. When one is reached, its money rolls to the next. The dates follow the money.
         </p>
+        {firstLate && (
+          <a className="banner" href={`/h/${household.id}/plan/goals/${firstLate.id}`} onClick={onLinkClick} style={{ maxWidth: 640 }}>
+            <span style={{ flex: "1 1 auto" }}>
+              Ways to get {firstLate.name} there{firstLate.wantedBy ? ` by ${monthName(firstLate.wantedBy)}` : ""}: save more, put the spare in, or borrow part of it.
+            </span>
+            <Icon.next />
+          </a>
+        )}
       </section>
 
       <section className="card lever" aria-label="The lever">
@@ -307,19 +371,36 @@ export function Plan({ household, version, onChanged }: { household: Household; 
             </div>
           )}
           <div className="card stack" style={{ gap: 8 }}>
-            <strong>A rule for bonuses</strong>
-            <span className="small" style={{ color: "var(--ink-soft)" }}>
-              Moving half of each festival bonus to the first unfinished goal brings every date after it closer. Log it with Move or save when it arrives.
-            </span>
+            <strong>If our income rises</strong>
+            <span className="small" style={{ color: "var(--ink-soft)" }}>Pay rises put more into the plan each year. Try a guess and watch the dates.</span>
+            <div className="chips" role="group" aria-label="Income rises each year">
+              {[0, 0.05, 0.08, 0.1].map((r) => (
+                <button key={r} type="button" className="chip" aria-pressed={growth === r} onClick={() => setGrowth(r)}>
+                  {r === 0 ? "No rise" : `${Math.round(r * 100)}% a year`}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="card stack" style={{ gap: 8 }}>
-            <strong>A loan for the last stretch</strong>
-            <span className="small" style={{ color: "var(--ink-soft)" }}>
-              Borrowing for the final stage of a build brings moving in forward. Ask your bank for a rate; repayments then come out of what goes into the plan.
-            </span>
+            <strong>Borrowing for part of it</strong>
+            {data.goals.some((g) => g.loan) ? (
+              <span className="small" style={{ color: "var(--ink-soft)" }}>
+                {data.goals
+                  .filter((g) => g.loan)
+                  .map((g) => `${g.name}: ${formatMoney(g.loan!.amountMinor, cur)} borrowed at ${rateLabel(g.loan!.rateBp)} over ${spanLabel(g.loan!.months)}.`)
+                  .join(" ")}{" "}
+                The installment starts once it is bought and comes out of the later goals.
+              </span>
+            ) : (
+              <span className="small" style={{ color: "var(--ink-soft)" }}>
+                A land or home loan means saving only the down payment. Open a goal and choose "Save part, borrow the rest" to see the installment, the interest and what it does to the road.
+              </span>
+            )}
           </div>
         </div>
       </section>
+
+      <MomentsCard household={household} plan={data} accounts={accounts} onChanged={onChanged} />
 
       <WhatWeHave household={household} accounts={accounts} />
 

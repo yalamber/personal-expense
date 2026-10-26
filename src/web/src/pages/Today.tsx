@@ -44,6 +44,9 @@ export function Today({
   const xq = useQuery<Transaction[]>(monthKey ? paths.transactions(household.id, monthKey) : null, [version]);
   const txs = xq.data ?? null;
   const mq = useQuery<{ month: string; incomeMinor: number; spentMinor: number; savedMinor: number }[]>(paths.months(household.id, 6), [version]);
+  // The pay period can start in last month: its first month's entries are read too.
+  const periodStartMonth = data && data.period.from.slice(0, 7) !== data.month ? data.period.from.slice(0, 7) : null;
+  const pq = useQuery<Transaction[]>(periodStartMonth ? paths.transactions(household.id, periodStartMonth) : null, [version]);
   const months = mq.data ?? [];
   const error = tq.error;
 
@@ -64,9 +67,12 @@ export function Today({
   // The month in pictures: spending by day against the pace, and where it went.
   const viewing = month ?? data.month;
   const isCurrent = viewing === data.month;
-  const { from, to } = monthRange(viewing);
+  // This month's view follows the pay period (payday to payday); other months are calendar months.
+  const { from, to } = isCurrent ? data.period : monthRange(viewing);
+  const byPayday = isCurrent && data.period.from !== monthRange(data.month).from;
   const kept = new Set(accounts.filter((a) => a.type === "deposit" || a.type === "loan" || a.type === "lent").map((a) => a.id));
-  const spendTxs = (txs ?? []).filter((t) => !kept.has(t.accountId));
+  const rangeTxs = isCurrent ? [...(pq.data ?? []), ...(txs ?? [])].filter((t) => t.date >= from && t.date <= to) : (txs ?? []);
+  const spendTxs = rangeTxs.filter((t) => !kept.has(t.accountId));
   const spentByDay = new Map<string, number>();
   for (const t of spendTxs) spentByDay.set(t.date, (spentByDay.get(t.date) ?? 0) + spendOf(t, categories));
   const lastDay = isCurrent && data.today < to ? data.today : to;
@@ -159,6 +165,12 @@ export function Today({
               <dd>{formatMoney(data.loansMinor, cur, { symbol: false })}</dd>
             </div>
           )}
+          {data.savedOtherMinor > 0 && (
+            <div>
+              <dt>Other saving</dt>
+              <dd>{formatMoney(data.savedOtherMinor, cur, { symbol: false })}</dd>
+            </div>
+          )}
           {data.billsMinor > 0 && (
             <div>
               <dt>Bills to come</dt>
@@ -194,7 +206,7 @@ export function Today({
         <div className="main">
           <section className="card stack" aria-labelledby="month-h">
             <div className="row between">
-              <h2 id="month-h">{isCurrent ? "This month, day by day" : `${monthName(viewing)}, day by day`}</h2>
+              <h2 id="month-h">{!isCurrent ? `${monthName(viewing)}, day by day` : byPayday ? "Since payday, day by day" : "This month, day by day"}</h2>
               <span className="small muted">
                 {shortDate(from)} to {shortDate(to)}
               </span>
@@ -612,7 +624,7 @@ function BookRow({
 /** The arithmetic behind the headline, line by line, and where the income figure comes from. */
 function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
   const n = (m: number) => formatMoney(m, cur, { symbol: false });
-  const incomeLabel = "Came in this month";
+  const incomeLabel = data.period.from.slice(8) === "01" ? "Came in this month" : `Came in since payday (${shortDate(data.period.from)})`;
   return (
     <details className="how">
       <summary>How is this worked out?</summary>
@@ -633,6 +645,12 @@ function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
           <>
             <span>− Bills still to come</span>
             <span>{n(data.billsMinor)}</span>
+          </>
+        )}
+        {data.savedOtherMinor > 0 && (
+          <>
+            <span>− Saved outside the goals</span>
+            <span>{n(data.savedOtherMinor)}</span>
           </>
         )}
         <span className="total">= For everyday things</span>

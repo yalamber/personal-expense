@@ -164,11 +164,18 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
               onDismiss={() => run(() => api.dismissStatement(household.id, st.id), "Set aside: not a statement.")}
             />
           ) : (
-            isAdmin && (
-              <a className="small" href={api.rawStatementUrl(household.id, st.id)} download style={{ alignSelf: "flex-start" }}>
-                Download the original email (.eml)
-              </a>
-            )
+            <div className="row" style={{ gap: 12 }}>
+              {(st.status === "unparsed" || st.status === "failed") && st.accountId && household.me.role !== "viewer" && !done && (
+                <button type="button" className="secondary" disabled={busy} onClick={() => run(() => api.rereadStatement(household.id, st.id), "Reading it again. Any lines it finds wait in Decide.")}>
+                  Read it again
+                </button>
+              )}
+              {isAdmin && (
+                <a className="small" href={api.rawStatementUrl(household.id, st.id)} download>
+                  Download the original email (.eml)
+                </a>
+              )}
+            </div>
           )}
         </>
       )}

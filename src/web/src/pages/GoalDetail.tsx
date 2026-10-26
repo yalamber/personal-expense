@@ -6,6 +6,7 @@ import { navigate, onLinkClick } from "../router";
 import { PageSkeleton } from "../skeleton";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 import { toPlanGoals } from "./Plan";
+import { FundingCard, WaysCard, planOptions } from "./planKit";
 
 /** One goal: what it is made of, when each part's money is ready, and the money that went in. */
 export function GoalDetail({ household, accounts, goalId, onChanged }: { household: Household; accounts: Account[]; goalId: string; onChanged: () => void }) {
@@ -38,7 +39,8 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
   }, [load]);
 
   const goal: Goal | undefined = plan?.goals.find((g) => g.id === goalId);
-  const outcome = useMemo(() => (plan && goal ? simulatePlan(toPlanGoals(plan.goals), { startMonth: plan.startMonth }).outcomes.find((o) => o.id === goal.id) ?? null : null), [plan, goal]);
+  const outcome = useMemo(() => (plan && goal ? simulatePlan(toPlanGoals(plan.goals), planOptions(plan)).outcomes.find((o) => o.id === goal.id) ?? null : null), [plan, goal]);
+  const [borrowSeed, setBorrowSeed] = useState<number | null>(null);
 
   async function run(fn: () => Promise<unknown>, done?: string) {
     setError(null);
@@ -127,6 +129,23 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
               </div>
             )}
           </section>
+
+          {!goal.completedAt && outcome && goal.kind !== "safety" && (outcome.doneMonth === null || (outcome.lateMonths ?? 0) > 0 || (!goal.monthlyPlanMinor && outcome.doneMonth !== "now")) && (
+            <WaysCard
+              household={household}
+              goal={goal}
+              plan={plan}
+              onBorrow={(amount) => {
+                setBorrowSeed(amount);
+                window.setTimeout(() => document.getElementById("how-we-pay")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+              }}
+              onChanged={(message) => void run(async () => undefined, message)}
+            />
+          )}
+
+          {!goal.completedAt && goal.kind !== "safety" && (
+            <FundingCard key={`fund-${borrowSeed ?? "plan"}-${goal.loan?.amountMinor ?? 0}`} household={household} goal={goal} plan={plan} initialAmount={borrowSeed} onSaved={(message) => { setBorrowSeed(null); void run(async () => undefined, message); }} />
+          )}
 
           <section className="card stack" aria-labelledby="parts-h">
             <h2 id="parts-h">{goal.kind === "build" ? "Stages" : "What it costs"}</h2>

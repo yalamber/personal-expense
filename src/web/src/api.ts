@@ -336,6 +336,8 @@ export type Goal = {
   savedFrom: "accounts" | "records";
   accounts: { id: string; name: string; type: string; balanceMinor: number }[];
   parts: GoalPart[];
+  /** Part of the price to borrow when it is bought: only the rest is saved. */
+  loan: { amountMinor: number; rateBp: number; months: number } | null;
 };
 
 export type LoanCommitments = {
@@ -354,7 +356,13 @@ export type PlanData = {
   basis: { source: "book" | "typical" | "none"; months: number; incomeMinor: number; spendMinor: number };
   loans: LoanCommitments;
   spareMinor: number | null;
+  /** Money moments: one-off or yearly money in (+) or out (−). */
+  events: PlanEventRow[];
 };
+
+export type PlanEventRow = { id: string; name: string; month: string; amountMinor: number; yearly: boolean; untilMonth: string | null; goalId: string | null; note: string | null };
+export type PlanEventBody = Partial<{ name: string; direction: "in" | "out"; amount: string; month: string; yearly: boolean; untilMonth: string | null; goalId: string | null; note: string }>;
+export type GoalLoanBody = { amount: string; rate: string; years: number } | null;
 
 export type Contribution = { id: string; date: string; amountMinor: number; note: string | null; memberName: string | null; transactionId: string | null; kind: "saved" | "paid" | "paid_from_saved" };
 
@@ -367,6 +375,10 @@ export type Today = {
   incomeMinor: number;
   /** Income listed under Every month and not yet in the book: shown, never counted. */
   expectedLaterMinor: number;
+  /** The pay period the figures cover: last payday to the day before the next. */
+  period: { from: string; to: string };
+  /** Saving this period outside the goals (shares, a new deposit). */
+  savedOtherMinor: number;
   mode: "nothing" | "waiting" | "unplanned" | "over" | "ok";
   spentMinor: number;
   goalsMinor: number;
@@ -448,6 +460,7 @@ export type NewGoalBody = {
   note?: string;
   linkedAccountId?: string | null;
   parts?: { name: string; amount: string }[];
+  loan?: GoalLoanBody;
 };
 
 const h = (id: string) => `/api/households/${id}`;
@@ -534,6 +547,7 @@ export const api = {
   releaseStatement: (id: string, statementId: string, accountId: string | null, remember = true) =>
     request<{ ok: true; remembered: boolean; sender: string | null }>("POST", `${h(id)}/statements/${statementId}/release`, { accountId, remember }),
   statementPreview: (id: string, statementId: string) => request<MailPreview>("GET", `${h(id)}/statements/${statementId}/preview`),
+  rereadStatement: (id: string, statementId: string) => request<{ ok: true }>("POST", `${h(id)}/statements/${statementId}/reread`),
   rawStatementUrl: (id: string, statementId: string) => `${h(id)}/statements/${statementId}/raw`,
 
   review: (id: string) => request<ReviewLine[]>("GET", `${h(id)}/review`),
@@ -572,8 +586,12 @@ export const api = {
   plan: (id: string) => request<PlanData>("GET", `${h(id)}/plan`),
   goals: (id: string) => request<Goal[]>("GET", `${h(id)}/goals`),
   createGoal: (id: string, body: NewGoalBody) => request<{ id: string }>("POST", `${h(id)}/goals`, body),
-  updateGoal: (id: string, goalId: string, body: Partial<{ name: string; kind: PlanGoalKind; target: string; wantedBy: string | null; monthly: string; note: string; linkedAccountId: string | null; completed: boolean }>) =>
+  updateGoal: (id: string, goalId: string, body: Partial<{ name: string; kind: PlanGoalKind; target: string; wantedBy: string | null; monthly: string; note: string; linkedAccountId: string | null; completed: boolean; loan: GoalLoanBody }>) =>
     request<{ ok: true }>("PATCH", `${h(id)}/goals/${goalId}`, body),
+  planEvents: (id: string) => request<PlanEventRow[]>("GET", `${h(id)}/plan-events`),
+  createPlanEvent: (id: string, body: PlanEventBody) => request<{ id: string }>("POST", `${h(id)}/plan-events`, body),
+  updatePlanEvent: (id: string, eventId: string, body: PlanEventBody) => request<{ ok: true }>("PATCH", `${h(id)}/plan-events/${eventId}`, body),
+  removePlanEvent: (id: string, eventId: string) => request<{ ok: true }>("DELETE", `${h(id)}/plan-events/${eventId}`),
   archiveGoal: (id: string, goalId: string) => request<{ ok: true }>("DELETE", `${h(id)}/goals/${goalId}`),
   orderGoals: (id: string, ids: string[]) => request<{ ok: true }>("PUT", `${h(id)}/goals/order`, { ids }),
   addPart: (id: string, goalId: string, body: { name: string; amount: string }) => request<{ id: string }>("POST", `${h(id)}/goals/${goalId}/parts`, body),

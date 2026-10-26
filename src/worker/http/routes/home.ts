@@ -7,11 +7,11 @@
  */
 import { Hono } from "hono";
 import { and, between, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
-import { addDays, monthRange, shiftMonth, todayIn } from "../../../shared/dates";
+import { addDays, monthRange, payPeriod, shiftMonth, todayIn } from "../../../shared/dates";
 import { minorDigits } from "../../../shared/money";
 import { monthMath } from "../../../shared/month";
 import { expectedInMinor, isOpen, reserveMinor } from "../../../shared/recurring";
-import { loadRecurring, type RecurringRow } from "../../ledger/recurring";
+import { loadRecurring, loadRecurringPeriod, type RecurringRow } from "../../ledger/recurring";
 import { loadTerms } from "../../ledger/terms";
 import { settleStatus } from "../../../shared/terms";
 import { normalizeMerchant } from "../../../shared/merchant";
@@ -20,7 +20,7 @@ import { schema, type Db } from "../../db";
 import { newId } from "../../lib/ids";
 import { loadMerchantIndex } from "../../ledger/merchants";
 import { worth } from "../../../shared/worth";
-import { bookBalance, loadAccountViews, loadGoals, loanCommitments, monthlyBasis, onEverydayAccounts, spareAfter, toPlanGoals, type AccountView } from "../../ledger/overview";
+import { bookBalance, loadAccountViews, loadGoals, loadPlanEvents, loanCommitments, monthlyBasis, onEverydayAccounts, spareAfter, toPlanGoals, type AccountView } from "../../ledger/overview";
 import { summarize } from "../../ledger/summary";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
@@ -300,14 +300,15 @@ async function planCards(db: Db, household: { id: string; currency: string; time
   if (spare <= Math.max(0, basis.incomeMinor * 0.03)) return [];
   const startMonth = shiftMonth(month, 1);
   const releases = loans.releases;
-  const base = simulatePlan(plan, { startMonth, releases });
+  const events = await loadPlanEvents(db, household.id);
+  const base = simulatePlan(plan, { startMonth, releases, events });
   const waiting = plan.find((g) => g.monthlyMinor === 0 && g.wantedBy && base.outcomes.find((o) => o.id === g.id)?.lateMonths !== null && (base.outcomes.find((o) => o.id === g.id)!.lateMonths ?? 0) > 0);
   if (!waiting) return [];
   const key = `fund:${waiting.id}`;
   const snoozed = await db.query.suggestions.findFirst({ where: and(eq(schema.suggestions.householdId, household.id), eq(schema.suggestions.ruleKey, key), gte(schema.suggestions.snoozedUntil, today)) });
   if (snoozed) return [];
 
-  const outcomeWith = (extra: number) => simulatePlan(plan.map((g): PlanGoal => (g.id === waiting.id ? { ...g, monthlyMinor: extra } : g)), { startMonth, releases }).outcomes.find((o) => o.id === waiting.id)!;
+  const outcomeWith = (extra: number) => simulatePlan(plan.map((g): PlanGoal => (g.id === waiting.id ? { ...g, monthlyMinor: extra } : g)), { startMonth, releases, events }).outcomes.find((o) => o.id === waiting.id)!;
   // Smallest tidy monthly amount that gets it there on time, if the spare money allows.
   let lo = 0;
   let hi = spare;
@@ -410,13 +411,16 @@ homeRoutes.get("/today", async (c) => {
   const household = c.get("household");
   const today = todayIn(household.timezone);
   const month = today.slice(0, 7);
-  const { from, to } = monthRange(month);
+  // The figures run from the last payday to the next one (the calendar month when payday is the 1st).
+  const { from, to } = payPeriod(today, household.monthStartDay);
 
+  // Decide asks about this calendar month's items; Today sets aside the ones in this pay period.
   const recurring = await loadRecurring(db, household.id, month, today);
+  const periodItems = from === monthRange(month).from ? recurring : await loadRecurringPeriod(db, household.id, from, to, today);
   const [categories, txs, budgets, goals, moved, cards, mailCounts, lastLines] = await Promise.all([
     db.query.categories.findMany({ where: eq(schema.categories.householdId, household.id) }),
     db
-      .select({ amountMinor: schema.transactions.amountMinor, direction: schema.transactions.direction, categoryId: schema.transactions.categoryId, transferPairId: schema.transactions.transferPairId })
+      .select({ amountMinor: schema.transactions.amountMinor, direction: schema.transactions.direction, categoryId: schema.transactions.categoryId, transferPairId: schema.transactions.transferPairId, goalId: schema.transactions.goalId })
       .from(schema.transactions)
       .where(and(eq(schema.transactions.householdId, household.id), between(schema.transactions.date, from, to), isNull(schema.transactions.voidedAt), onEverydayAccounts())),
     db.query.budgets.findMany({ where: and(eq(schema.budgets.householdId, household.id), eq(schema.budgets.month, month)) }),
@@ -425,13 +429,17 @@ homeRoutes.get("/today", async (c) => {
       .select({ total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
       .from(schema.goalContributions)
       .innerJoin(schema.goals, eq(schema.goals.id, schema.goalContributions.goalId))
+      .leftJoin(schema.transactions, eq(schema.transactions.id, schema.goalContributions.transactionId))
+      .leftJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
       .where(
         and(
           eq(schema.goals.householdId, household.id),
           between(schema.goalContributions.date, from, to),
           sql`${schema.goalContributions.note} is not 'Already saved'`,
-          // Money that moved this month: saved, or paid from an account (not paid before the book, not out of savings).
+          // Money that moved this period: saved, or paid from an account (not paid before the book, not out of savings).
           sql`(${schema.goalContributions.kind} = 'saved' or ${schema.goalContributions.transactionId} is not null)`,
+          // A baina paid from the goal's own savings account is not this period's money.
+          sql`(${schema.accounts.goalId} is null or ${schema.accounts.goalId} != ${schema.goalContributions.goalId})`,
         ),
       ),
     loadDecideCards(c, recurring),
@@ -449,6 +457,8 @@ homeRoutes.get("/today", async (c) => {
   ]);
 
   const s = summarize(txs, categories);
+  // Saving outside the goals (shares, a new deposit): goal moves are counted under the goals already.
+  const savedOtherMinor = Math.max(0, summarize(txs.filter((t) => !t.goalId), categories).saved);
   const active = goals.filter((g) => !g.completedAt);
   const plannedMinor = active.reduce((sum, g) => sum + g.monthlyPlanMinor, 0);
   const movedMinor = Number(moved[0]?.total ?? 0);
@@ -461,7 +471,7 @@ homeRoutes.get("/today", async (c) => {
   const payday = nextPayday(today, household.monthStartDay);
   const daysLeft = Math.max(1, daysBetween(today, payday));
   // Every-month bills not yet in the book are set aside; income not yet in stands in for the usual figure.
-  const rows = recurring.map((r) => ({ item: r, status: r.status }));
+  const rows = periodItems.map((r) => ({ item: r, status: r.status }));
   const billsMinor = reserveMinor(rows);
   const math = monthMath({
     loggedInMinor: s.income,
@@ -470,6 +480,7 @@ homeRoutes.get("/today", async (c) => {
     goalsMinor,
     loansMinor,
     billsMinor,
+    savedOtherMinor,
     daysLeft,
     minorDigits: minorDigits(household.currency),
   });
@@ -498,7 +509,7 @@ homeRoutes.get("/today", async (c) => {
   // The next goal on the road and when it lands at the current plan.
   const startMonth = shiftMonth(month, 1);
   const plan = toPlanGoals(goals);
-  const sim = plan.length ? simulatePlan(plan, { startMonth, releases: loans.releases }) : null;
+  const sim = plan.length ? simulatePlan(plan, { startMonth, releases: loans.releases, events: await loadPlanEvents(db, household.id) }) : null;
   const next = active[0] ? { ...active[0], outcome: sim?.outcomes.find((o) => o.id === active[0]!.id) ?? null } : null;
 
   return c.json({
@@ -522,7 +533,10 @@ homeRoutes.get("/today", async (c) => {
     everydayLeftMinor,
     perDayMinor: math.perDayMinor,
     // This month's every-month items, for the Coming up card.
-    comingUp: recurring.map((r) => ({ id: r.id, name: r.name, direction: r.direction, amountMinor: r.amountMinor, due: r.status.due, state: r.status.state, daysUntil: r.status.daysUntil, accountId: r.accountId, transactionId: r.status.transactionId })),
+    // The pay period the figures cover.
+    period: { from, to },
+    savedOtherMinor,
+    comingUp: periodItems.map((r) => ({ id: r.id, name: r.name, direction: r.direction, amountMinor: r.amountMinor, due: r.status.due, state: r.status.state, daysUntil: r.status.daysUntil, accountId: r.accountId, transactionId: r.status.transactionId })),
     uncategorizedCount: s.uncategorized,
     envelopes,
     bank,

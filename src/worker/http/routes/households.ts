@@ -219,6 +219,20 @@ scoped.get("/statements/:statementId/preview", async (c) => {
   return c.json(await buildPreview(c.env, db, row));
 });
 
+/** Reads an email again (after the readers improve): one that could not be read, or failed. */
+scoped.post("/statements/:statementId/reread", requireWriter, async (c) => {
+  const db = c.get("db");
+  const row = await db.query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });
+  if (!row) return c.json({ error: "not found" }, 404);
+  if (row.status !== "unparsed" && row.status !== "failed") return c.json({ error: "only an email that was not read can be read again" }, 409);
+  if (!row.accountId) return c.json({ error: "link it to an account first" }, 409);
+  // A failed read may have left lines waiting; they are read afresh.
+  await db.delete(schema.importLines).where(and(eq(schema.importLines.statementEmailId, row.id), eq(schema.importLines.decision, "pending")));
+  await db.update(schema.statementEmails).set({ status: "received", error: null, parserKey: null, processedAt: null }).where(eq(schema.statementEmails.id, row.id));
+  await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
+  return c.json({ ok: true });
+});
+
 /** Admin only: the raw message as it arrived (.eml), for a look or to send in as a parser sample. */
 scoped.get("/statements/:statementId/raw", requireAdmin, async (c) => {
   const row = await c.get("db").query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });

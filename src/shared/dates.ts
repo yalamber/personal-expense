@@ -100,3 +100,15 @@ export function todayIn(timeZone: string): string {
     return new Date().toISOString().slice(0, 10);
   }
 }
+
+/**
+ * The pay period a day falls in: from the last payday to the day before the next one. With payday
+ * on the 1st it is the calendar month. Paydays after the 28th count as the 28th, as everywhere else.
+ */
+export function payPeriod(today: string, payDay: number): { from: string; to: string } {
+  const d = String(Math.min(Math.max(1, Math.round(payDay)), 28)).padStart(2, "0");
+  const month = today.slice(0, 7);
+  const thisPay = `${month}-${d}`;
+  const start = today >= thisPay ? thisPay : `${shiftMonth(month, -1)}-${d}`;
+  return { from: start, to: addDays(`${shiftMonth(start.slice(0, 7), 1)}-${d}`, -1) };
+}

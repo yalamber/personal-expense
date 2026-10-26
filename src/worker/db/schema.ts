@@ -312,12 +312,42 @@ export const goals = sqliteTable(
     priority: integer("priority").notNull().default(0),
     linkedAccountId: text("linked_account_id").references(() => accounts.id),
     monthlyPlanMinor: integer("monthly_plan_minor"),
+    /**
+     * Part of the price to borrow when it is bought (a land or home loan): only the rest is saved,
+     * and the installment then comes out of the money going into later goals.
+     */
+    loanMinor: integer("loan_minor"),
+    loanRateBp: integer("loan_rate_bp"),
+    loanMonths: integer("loan_months"),
     note: text("note"),
     completedAt: text("completed_at"),
     archivedAt: text("archived_at"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("goals_household").on(t.householdId)],
+);
+
+/**
+ * Money moments in the plan: money that comes in once or every year (a festival bonus, an FD
+ * maturing, a plot sold) or goes out (a wedding, an admission fee). Positive in, negative out.
+ */
+export const planEvents = sqliteTable(
+  "plan_events",
+  {
+    id: text("id").primaryKey(),
+    householdId: text("household_id").notNull().references(() => households.id),
+    name: text("name").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+    /** YYYY-MM it happens (the first time, when yearly). */
+    month: text("month").notNull(),
+    yearly: integer("yearly", { mode: "boolean" }).notNull().default(false),
+    untilMonth: text("until_month"),
+    /** Money in meant for one goal; otherwise it goes to the first unfinished goal. */
+    goalId: text("goal_id").references(() => goals.id),
+    note: text("note"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("plan_events_household").on(t.householdId)],
 );
 
 /** What a goal's target is made of: cost items for a purchase, stages in order for a build. */

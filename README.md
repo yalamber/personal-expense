@@ -116,6 +116,28 @@ alert once in Decide. An email with no transaction in it is marked "no parser ye
 reason. Admins can download any email as `.eml` from Settings › Inbox; one sample per bank is
 enough to write an exact parser.
 
+**Planning big purchases.** A goal can be saved for in full, or saved in part and borrowed for the
+rest (amount, yearly rate, years). Only the down payment is saved; once it is bought the
+installment starts and comes out of the money going into the later goals until the loan is
+repaid, and the road shows both moments. The goal's page shows the installment, the interest over
+the loan, its share of a usual month's income (under 30% comfortable, past 50% more than banks
+usually lend against) and any month the installment is more than the plan's money. A goal that is
+late or out of reach shows the ways to get there: the monthly amount that makes the date, the date
+with the spare money put in, the loan that closes the gap, or a later date, each one tap.
+
+**Money moments** (`plan_events`): money that comes in or goes out once or every year, such as a
+festival bonus, an FD maturing (offered from the deposit), a wedding or a school admission. Money
+in goes to a chosen goal or the first unfinished one; money out comes out of what goes into the
+goals, carried into later months when one month cannot cover it. The Plan also tries pay rises
+(none, 5, 8 or 10% a year), and a loan's "What if we pay more?" shows the months and interest saved
+by an extra amount each month or a sum now.
+
+**Today runs payday to payday.** With payday on the 7th, the figures cover the 7th to the 6th:
+income, spending, bills to come and money moved to goals. A baina paid from a goal's own savings is
+not taken from the period's money; saving outside the goals (shares, a new deposit) is set aside;
+money taken back out of savings is not income. A khata charge ("they owe us for rent") counts
+when it is recorded, as the family's own entry of money owed.
+
 Next: bank-specific email parsers from real samples, history backfill, yearly bills (insurance,
 school fees paid once a year).
 
@@ -308,6 +330,7 @@ src/worker/          Worker: API, email handler, parse step, cron
 src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise, freed EMIs), used by both sides
 src/shared/deposit.ts, loan.ts   Fixed-deposit interest and maturity; EMI, interest split, months left
 src/shared/month.ts, recurring.ts   The month's arithmetic behind Today's headline; every-month items and where each stands
+src/shared/terms.ts  Interest and settle-by dates for money between people
 src/web/             React web app (Vite root): Today, Log, Decide, Plan, Khata, Settings
 migrations/          Drizzle-generated SQL applied by wrangler or the Cloudflare connector
 test/                Vitest unit tests and email fixtures

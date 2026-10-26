@@ -64,3 +64,31 @@ export function nextDue(today: string, day: number): string {
 export function payoffMonth(today: string, day: number, months: number): string {
   return addMonths(nextDue(today, day), Math.max(0, months - 1)).slice(0, 7);
 }
+
+export type Payoff = { months: number; interestMinor: number };
+
+/**
+ * Paying a loan faster: the installment plus an extra amount each month, and/or a one-off sum
+ * now. Returns how long it takes and the interest paid, as it is and with the extra, or null where
+ * the installment does not cover the interest.
+ */
+export function payMore(owedMinor: number, rateBp: number, installmentMinor: number, extra: { monthlyMinor?: number; lumpMinor?: number } = {}): { before: Payoff | null; after: Payoff | null } {
+  const run = (owed: number, payment: number): Payoff | null => {
+    let left = owed;
+    let interest = 0;
+    let months = 0;
+    while (left > 0) {
+      if (months >= 1200) return null;
+      const due = Math.max(0, Math.round(left * monthly(rateBp)));
+      const pay = Math.min(payment, left + due);
+      if (pay <= due && left > 0) return null;
+      interest += due;
+      left -= pay - due;
+      months++;
+    }
+    return { months, interestMinor: interest };
+  };
+  const lump = Math.max(0, extra.lumpMinor ?? 0);
+  const more = Math.max(0, extra.monthlyMinor ?? 0);
+  return { before: run(owedMinor, installmentMinor), after: run(Math.max(0, owedMinor - lump), installmentMinor + more) };
+}
