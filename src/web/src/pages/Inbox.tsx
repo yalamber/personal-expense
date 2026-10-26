@@ -1,34 +1,34 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Account, type Household, type Statement, type StatementStatus } from "../api";
+import { api, ApiError, type Household, type Statement, type StatementStatus } from "../api";
+import { PageSkeleton } from "../skeleton";
+import { LinkAccount, MailDetails, MailSkeleton, WhyHeld, useMailPreview, when } from "./MailView";
 
-const statusPill: Record<StatementStatus, { label: string; tone: string }> = {
-  received: { label: "queued", tone: "grey" },
-  quarantined: { label: "quarantined", tone: "amber" },
-  unparsed: { label: "no parser yet", tone: "grey" },
-  parsed: { label: "parsed", tone: "teal" },
-  review: { label: "needs review", tone: "amber" },
-  done: { label: "done", tone: "teal" },
-  failed: { label: "failed", tone: "amber" },
-  forwarding: { label: "forwarding check", tone: "amber" },
+/** What each status means to the family, and whether it waits on them. */
+const STATUS: Record<StatementStatus, { label: string; tone: "amber" | "teal" | "grey"; waits: boolean }> = {
+  quarantined: { label: "needs an account", tone: "amber", waits: true },
+  unparsed: { label: "not read", tone: "grey", waits: false },
+  failed: { label: "could not read", tone: "amber", waits: false },
+  received: { label: "reading", tone: "grey", waits: false },
+  review: { label: "lines in Decide", tone: "amber", waits: true },
+  parsed: { label: "in the book", tone: "teal", waits: false },
+  done: { label: "done", tone: "teal", waits: false },
+  forwarding: { label: "forwarding code", tone: "amber", waits: true },
 };
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
+/**
+ * Settings › Inbox: every email that arrived at the statements address, newest first. Open one to
+ * see where it came from, what the app read from it and the email itself; one from a new sender
+ * can be linked to its account right here.
+ */
 export function Inbox({ household }: { household: Household }) {
   const [rows, setRows] = useState<Statement[] | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const isAdmin = household.me.role === "admin";
+  const [open, setOpen] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [s, a] = await Promise.all([api.statements(household.id), api.accounts(household.id)]);
-      setRows(s);
-      setAccounts(a);
+      setRows(await api.statements(household.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the inbox");
     }
@@ -40,107 +40,138 @@ export function Inbox({ household }: { household: Household }) {
     return () => window.clearInterval(t);
   }, [load]);
 
-  async function release(st: Statement, accountId: string) {
-    try {
-      await api.releaseStatement(household.id, st.id, accountId || null);
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not release the email");
-    }
-  }
+  const waiting = (rows ?? []).filter((r) => STATUS[r.status].waits);
 
   return (
     <>
-      <div className="stack" style={{ gap: 4 }}>
+      <div className="stack" style={{ gap: 6 }}>
         <h1>Inbox</h1>
-        <div className="muted">
-          Forward bank emails to <span className="mono">{household.inboundAddress}</span>. They show up here within a minute. Mail from a sender no account lists yet waits for an admin, here and in Decide; "no parser yet" means the email arrived but nothing in it read like a transaction. Download one and send it in, and a parser can be written for that bank.
+        <span className="muted">Every email that arrived at your statements address. Open one to see where it came from, what the app read, and the email itself.</span>
+        <div className="row" style={{ gap: 8 }}>
+          <span className="mono small" style={{ overflowWrap: "anywhere" }}>{household.inboundAddress}</span>
+          <button
+            type="button"
+            className="link small"
+            onClick={() => {
+              void navigator.clipboard?.writeText(household.inboundAddress);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
         </div>
       </div>
 
       {error && <div className="error">{error}</div>}
+      {!rows && !error && <PageSkeleton kind="list" />}
 
       {rows && rows.length === 0 && (
         <div className="card stack">
           <strong>Nothing has arrived yet.</strong>
           <span className="muted">
-            Add an account with the bank's sender address first, then forward one statement or alert email to the address above.
-            Mail from senders not on any account's list lands here as quarantined so an admin can decide.
+            Add the bank's sender address to the account in Accounts, then forward one alert email to the address above. Mail from a sender no account lists waits here and in Decide
+            until an admin says which account it is about.
           </span>
         </div>
       )}
 
       {rows && rows.length > 0 && (
-        <div className="card table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Received</th>
-                <th>From</th>
-                <th>Subject</th>
-                <th>Account</th>
-                <th>Attachments</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((st) => {
-                const pill = statusPill[st.status];
-                return (
-                  <tr key={st.id}>
-                    <td className="mono" style={{ whiteSpace: "nowrap" }}>
-                      {new Date(st.receivedAt).toLocaleString()}
-                    </td>
-                    <td>{st.fromAddress}</td>
-                    <td>
-                      {st.subject ?? <span className="muted">(no subject)</span>}
-                      <div className="muted mono">{formatBytes(st.rawSize)}</div>
-                    </td>
-                    <td>
-                      {st.accountName ?? <span className="muted">none</span>}
-                      {st.status === "quarantined" && isAdmin && accounts.length > 0 && (
-                        <div className="row" style={{ marginTop: 6 }}>
-                          <select aria-label="Attach to account" defaultValue="" onChange={(e) => e.target.value && release(st, e.target.value)}>
-                            <option value="">Attach, remember the sender, and read…</option>
-                            {accounts.filter((a) => ["checking", "savings", "credit", "wallet"].includes(a.type) && !a.closedAt).map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      {st.attachments.length === 0 ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        st.attachments.map((a) => (
-                          <div key={a.filename} className="mono">
-                            {a.filename} <span className="muted">{formatBytes(a.size)}</span>
-                          </div>
-                        ))
-                      )}
-                    </td>
-                    <td>
-                      <span className={`pill ${pill.tone}`}>{pill.label}</span>
-                      {st.error && <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>{st.error}</div>}
-                      {st.verifyCode?.code && <div className="mono" style={{ marginTop: 4, fontSize: 13 }}>code {st.verifyCode.code}</div>}
-                      {isAdmin && (
-                        <div style={{ marginTop: 4 }}>
-                          <a className="small" href={api.rawStatementUrl(household.id, st.id)} download>
-                            Download the email
-                          </a>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <section className="card" aria-label="Emails" style={{ paddingTop: 6, paddingBottom: 6 }}>
+          {waiting.length > 0 && (
+            <div className="small" style={{ padding: "8px 6px", color: "var(--marigold-deep)" }}>
+              {waiting.length} {waiting.length === 1 ? "email waits" : "emails wait"} on you.
+            </div>
+          )}
+          <div className="mail-list">
+            {rows.map((st) => {
+              const s = STATUS[st.status];
+              const isOpen = open === st.id;
+              return (
+                <div key={st.id}>
+                  <button type="button" className="mail-row" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : st.id)}>
+                    <span className={`mail-dot ${s.tone}`} aria-hidden="true" />
+                    <span className="what">
+                      <strong>{st.subject ?? "(no subject)"}</strong>
+                      <span className="small muted">
+                        {st.fromAddress} · {when(st.receivedAt)}
+                      </span>
+                    </span>
+                    <span className="end">
+                      <span className={`pill ${s.tone}`}>{s.label}</span>
+                      <span className="small muted">{st.accountName ?? (st.status === "quarantined" ? "no account yet" : "")}</span>
+                    </span>
+                  </button>
+                  {isOpen && <InboxDetail household={household} statement={st} onChanged={load} />}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
     </>
+  );
+}
+
+function InboxDetail({ household, statement: st, onChanged }: { household: Household; statement: Statement; onChanged: () => void }) {
+  const { data, error, reload } = useMailPreview(household.id, st.id);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const isAdmin = household.me.role === "admin";
+
+  async function run(fn: () => Promise<unknown>, message: string) {
+    setBusy(true);
+    setFailure(null);
+    try {
+      await fn();
+      setDone(message);
+      onChanged();
+      void reload();
+    } catch (e) {
+      setFailure(e instanceof ApiError ? e.message : "Could not do that");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mail-open">
+      {error && <div className="error small">{error}</div>}
+      {!data && !error && <MailSkeleton />}
+      {data && (
+        <>
+          {st.error && st.status !== "quarantined" && (
+            <div className="why" role="note">
+              {st.error}
+            </div>
+          )}
+          {st.verifyCode?.code && (
+            <div className="why calm" role="note">
+              Gmail's confirmation code: <strong className="mono">{st.verifyCode.code}</strong>
+            </div>
+          )}
+          {st.status === "quarantined" && !done && <WhyHeld preview={data} />}
+          <MailDetails preview={data} household={household} open={st.status === "quarantined"} />
+          {done && <div className="ok small">{done}</div>}
+          {failure && <div className="error small">{failure}</div>}
+          {st.status === "quarantined" && !done ? (
+            <LinkAccount
+              household={household}
+              preview={data}
+              busy={busy}
+              onLink={(accountId, name, remember) => run(() => api.releaseStatement(household.id, st.id, accountId, remember), `Reading it for ${name}. Any lines it finds wait in Decide.`)}
+              onDismiss={() => run(() => api.dismissStatement(household.id, st.id), "Set aside: not a statement.")}
+            />
+          ) : (
+            isAdmin && (
+              <a className="small" href={api.rawStatementUrl(household.id, st.id)} download style={{ alignSelf: "flex-start" }}>
+                Download the original email (.eml)
+              </a>
+            )
+          )}
+        </>
+      )}
+    </div>
   );
 }

@@ -78,6 +78,59 @@ export function looksLikeForwarder(address: string): boolean {
   return /^(?:postmaster@|mailer-daemon@|srs[01][=+]|prvs=|bounces?[-+@.]|msprvs|[^@]*\+caf_=)/i.test(address.trim());
 }
 
+/**
+ * The sender worth naming and remembering: the first candidate that is neither a mail system's
+ * envelope address nor one of the household's own mailboxes (a message forwarded by hand comes
+ * From the person who forwarded it; the bank is further down the list, in the quoted block).
+ */
+export function pickSender(candidates: string[], own: Set<string>): string | null {
+  return candidates.find((c) => !looksLikeForwarder(c) && !own.has(c.toLowerCase())) ?? null;
+}
+
+/** example.com from alerts.mail.example.com; example.com.np keeps its three labels. */
+export function baseDomain(domain: string): string {
+  const parts = domain.toLowerCase().split(".").filter(Boolean);
+  if (parts.length <= 2) return parts.join(".");
+  const tld = parts[parts.length - 1]!;
+  const second = parts[parts.length - 2]!;
+  const keep = tld.length === 2 && ["com", "org", "net", "edu", "gov", "co", "ac"].includes(second) ? 3 : 2;
+  return parts.slice(-keep).join(".");
+}
+
+const NAME_STOP = new Set(["bank", "banks", "account", "accounts", "saving", "savings", "current", "joint", "card", "cards", "credit", "debit", "wallet", "cash", "salary", "main", "home", "family", "personal", "limited", "nepal", "the", "and", "from", "with", "deposit", "fixed"]);
+
+export type AccountForMail = { id: string; name: string; type: string; institution: string | null; statementSenderPattern: string | null };
+export type RankedAccount = { id: string; level: 0 | 1 | 2 | 3; reason: string | null };
+
+/**
+ * Which account an email is most likely about, best first. 3: the sender is already on the
+ * account's list; 2: the list has other senders from the same domain; 1: a distinctive word of the
+ * account's name or bank ("Nabil") is in the sender's address, name or the subject; 0: no clue.
+ */
+export function rankAccounts(accounts: AccountForMail[], sender: string | null, hints: string): RankedAccount[] {
+  const addr = (sender ?? "").toLowerCase();
+  const domain = addr.slice(addr.lastIndexOf("@") + 1);
+  const base = domain ? baseDomain(domain) : "";
+  const haystack = `${domain} ${hints}`.toLowerCase();
+  const ranked = accounts.map((a, i): RankedAccount & { i: number } => {
+    if (addr && senderMatches(a.statementSenderPattern, addr)) return { id: a.id, level: 3, reason: "already reads mail from this sender", i };
+    const domains = (a.statementSenderPattern ?? "")
+      .split(",")
+      .map((p) => p.trim().toLowerCase())
+      .filter(Boolean)
+      .map((p) => (p.startsWith("@") ? p.slice(1) : p.slice(p.lastIndexOf("@") + 1)));
+    if (base && domains.some((d) => baseDomain(d) === base)) return { id: a.id, level: 2, reason: `it already reads mail from ${base}`, i };
+    const words = `${a.name} ${a.institution ?? ""}`
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !NAME_STOP.has(w));
+    const hit = words.find((w) => haystack.includes(w));
+    if (hit) return { id: a.id, level: 1, reason: `"${hit[0]!.toUpperCase()}${hit.slice(1)}" is in the sender's name`, i };
+    return { id: a.id, level: 0, reason: null, i };
+  });
+  return ranked.sort((x, y) => y.level - x.level || x.i - y.i).map(({ i: _i, ...r }) => r);
+}
+
 /** Builds the address a household forwards statements to. */
 export function inboundAddressFor(localPart: string, token: string, domain: string): string {
   return `${localPart}+${token}@${domain}`;

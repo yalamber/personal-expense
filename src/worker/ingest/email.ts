@@ -14,7 +14,7 @@ import PostalMime from "postal-mime";
 import { getDb, schema } from "../db";
 import type { AppEnv } from "../env";
 import { newId } from "../lib/ids";
-import { extractEmail, forwardingCheck, parseInboundAddress, rawMailKeys, senderCandidates, senderMatches } from "../lib/inbound";
+import { extractEmail, forwardingCheck, parseInboundAddress, pickSender, rawMailKeys, senderCandidates, senderMatches } from "../lib/inbound";
 import { plainText } from "./parsers/text";
 import { dispatchParse } from "./dispatch";
 
@@ -80,8 +80,11 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
       console.log(`[email] could not read the message body: ${String(err)}`);
     }
   }
-  // The address kept with the email is the one that matched (the bank behind a hand-forward), else the From header.
-  const from = (matched && candidates.find((c) => senderMatches(matched!.statementSenderPattern, c))) || candidates[0] || envelopeFrom;
+  // The address kept with the email is the one that matched (the bank behind a hand-forward), else
+  // the first that is neither a forwarder nor one of the family's own mailboxes.
+  const members = await db.query.members.findMany({ where: eq(schema.members.householdId, household.id), columns: { email: true } });
+  const own = new Set(members.map((m) => m.email.toLowerCase()));
+  const from = (matched && candidates.find((c) => senderMatches(matched!.statementSenderPattern, c))) || pickSender(candidates, own) || candidates[0] || envelopeFrom;
   const forwarded = from !== envelopeFrom ? ` (forwarded by ${envelopeFrom})` : "";
 
   const status = check ? "forwarding" : matched ? "received" : "quarantined";

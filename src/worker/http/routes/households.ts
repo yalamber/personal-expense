@@ -4,7 +4,8 @@ import { parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { dispatchParse } from "../../ingest/dispatch";
 import { ensureCategories } from "../../ledger/categories";
-import { inboundAddressFor, looksLikeForwarder, senderMatches } from "../../lib/inbound";
+import { inboundAddressFor, senderMatches } from "../../lib/inbound";
+import { buildPreview, loadRaw, realSender } from "../../ingest/preview";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
 import { idempotent, readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
@@ -194,15 +195,28 @@ scoped.post("/statements/:statementId/release", requireAdmin, async (c) => {
   if (!accountId) return c.json({ error: "choose the account this email is about" }, 400);
   const account = await db.query.accounts.findFirst({ where: and(eq(schema.accounts.id, accountId), eq(schema.accounts.householdId, row.householdId)) });
   if (!account || account.type === "person") return c.json({ error: "account not found" }, 404);
+  // The sender to remember is the bank behind any forward, never a forwarder or the family's own mailbox.
+  const sender = await realSender(db, row, await loadRaw(c.env, row).catch(() => null));
   let remembered = false;
-  if (body.remember !== false && row.fromAddress.includes("@") && !looksLikeForwarder(row.fromAddress) && !senderMatches(account.statementSenderPattern, row.fromAddress)) {
-    const pattern = [account.statementSenderPattern?.trim(), row.fromAddress.toLowerCase()].filter(Boolean).join(", ");
+  if (body.remember !== false && sender && !senderMatches(account.statementSenderPattern, sender)) {
+    const pattern = [account.statementSenderPattern?.trim(), sender].filter(Boolean).join(", ");
     await db.update(schema.accounts).set({ statementSenderPattern: pattern }).where(eq(schema.accounts.id, account.id));
     remembered = true;
   }
-  await db.update(schema.statementEmails).set({ status: "received", accountId: account.id, error: null }).where(eq(schema.statementEmails.id, row.id));
+  await db
+    .update(schema.statementEmails)
+    .set({ status: "received", accountId: account.id, error: null, ...(sender ? { fromAddress: sender } : {}) })
+    .where(eq(schema.statementEmails.id, row.id));
   await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
-  return c.json({ ok: true, remembered });
+  return c.json({ ok: true, remembered, sender });
+});
+
+/** A stored email as a person sees it: who sent and forwarded it, what it says, what can be read, and the likely account. */
+scoped.get("/statements/:statementId/preview", async (c) => {
+  const db = c.get("db");
+  const row = await db.query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });
+  if (!row) return c.json({ error: "not found" }, 404);
+  return c.json(await buildPreview(c.env, db, row));
 });
 
 /** Admin only: the raw message as it arrived (.eml), for a look or to send in as a parser sample. */

@@ -150,6 +150,11 @@ const inboxCard = cards.find((c) => c.kind === "inbox");
 ok(inboxCard && inboxCard.from === "alerts@newbank.example" && inboxCard.statementId === st.id, "Decide shows the new-sender card first");
 const raw = await fetch(`${BASE}${H}/statements/${st.id}/raw`, { headers: { cookie: state.cookie } });
 ok(raw.status === 200 && /message\/rfc822/.test(raw.headers.get("content-type")) && /Debit Alert/.test(await raw.text()), "the raw email can be downloaded");
+let pv = (await call("GET", `${H}/statements/${st.id}/preview`, null, 200)).data;
+ok(pv.from.name === "New Bank" && pv.from.address === "alerts@newbank.example" && pv.sender === "alerts@newbank.example" && pv.held === "new-sender", "the preview names the sender and why it waits");
+ok(pv.subject === "Debit Alert" && /debited by NPR 800/.test(pv.text) && pv.attachments.length === 0, "it shows the email's text");
+ok(pv.reading.parserKey === "alert-text" && pv.reading.lines.length === 1 && pv.reading.lines[0].amountMinor === 80000 && pv.reading.lines[0].description === "COFFEE", "and what the alert reader would take from it");
+ok(pv.accounts.length >= 1 && pv.accounts.every((a) => ["checking", "savings", "credit", "wallet"].includes(a.type)), "the accounts offered are the ones that take statements");
 const rel = (await call("POST", `${H}/statements/${st.id}/release`, { accountId: nabil, remember: true }, 200)).data;
 ok(rel.remembered === true, "attaching it remembers the sender");
 await sleep(1500);
@@ -159,6 +164,20 @@ st = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id ===
 ok(st.status === "review" && st.accountId === nabil, "and the email was read for that account");
 st = await deliver("alerts@newbank.example", mail("New Bank <alerts@newbank.example>", "Debit Alert", "Your account has been debited by NPR 300.00 on 2026-10-21. Remarks: TEA"));
 ok(st.status === "review", "the next one from that sender goes straight through");
+// Forwarded by hand from the family's own mailbox: the bank in the quoted block is the sender, not the family.
+const me = (await call("GET", "/api/me", null, 200)).data.user.email;
+st = await deliver(me, mail(`Me <${me}>`, "Fwd: Debit Alert", `see below\r\n\r\n---------- Forwarded message ---------\r\nFrom: Global IME <alerts@globalimebank.com>\r\nSubject: Debit Alert\r\n\r\nYour account has been debited by NPR 2,400.00 on 2026-10-22. Remarks: NEA BILL`));
+ok(st.status === "quarantined" && st.fromAddress === "alerts@globalimebank.com", "a hand-forward is kept under the bank's address, not the family's");
+pv = (await call("GET", `${H}/statements/${st.id}/preview`, null, 200)).data;
+ok(pv.from.address === me && pv.sender === "alerts@globalimebank.com" && pv.forwardedBy === me, "the preview shows who forwarded it and who sent it");
+const gime = (await call("POST", `${H}/accounts`, { name: "Global IME savings", type: "savings", balance: "1000" }, 201)).data.id;
+pv = (await call("GET", `${H}/statements/${st.id}/preview`, null, 200)).data;
+ok(pv.accounts[0].id === gime && pv.accounts[0].level === 1, `the account named after the bank is offered first (${pv.accounts[0].reason})`);
+await call("POST", `${H}/statements/${st.id}/release`, { accountId: gime, remember: true }, 200);
+const gimeAcct = (await call("GET", `${H}/accounts`, null, 200)).data.find((a) => a.id === gime);
+ok(gimeAcct.statementSenderPattern === "alerts@globalimebank.com", "remembering learns the bank, never the family's own address");
+await sleep(1500);
+
 st = await deliver("promo@shop.example", mail("Shop <promo@shop.example>", "Big sale this weekend", "Everything half price."));
 ok(st.status === "quarantined", "a shop's newsletter waits too");
 await call("POST", `${H}/statements/${st.id}/dismiss`, {}, 200);

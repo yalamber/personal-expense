@@ -134,6 +134,64 @@ if (every) {
   await ctx.close();
 }
 
+// An email from a new sender: Decide shows where it came from, what it says, and the likely account.
+if (every) {
+  const hhInfo = await (await fetch(`${BASE}/api/households/${every.hh}`, { headers: { cookie: every.cookie } })).json();
+  const to = hhInfo.inboundAddress;
+  const eml = [
+    "From: Nabil Bank <txn-alert@nabilbank.com>",
+    `To: ${to}`,
+    "Subject: Transaction Alert",
+    `Date: ${new Date().toUTCString()}`,
+    "Message-ID: <browser-held-1@e2e.example>",
+    "X-Forwarded-For: family@example.com " + to,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Dear Customer,",
+    "",
+    "Your account 01010XXXXXX89 has been debited by NPR 1,500.00 on 26/10/2026 14:03:11.",
+    "Remarks: ESEWA LOAD 9841XXXXXX",
+    "Available Balance: NPR 1,23,456.78",
+  ].join("\r\n");
+  const r = await fetch(`${BASE}/cdn-cgi/handler/email?from=${encodeURIComponent("postmaster@mail-wr1-x436.google.com")}&to=${encodeURIComponent(to)}`, { method: "POST", body: eml });
+  ok(r.status < 300, "a forwarded alert from a new sender arrives");
+  await new Promise((res) => setTimeout(res, 1200));
+
+  for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["phone", { width: 390, height: 844 }]]) {
+    const ctx = await browser.newContext({ viewport, deviceScaleFactor: label === "phone" ? 2 : 1 });
+    await ctx.addCookies(cookieFor(every.cookie));
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => errors.push(`mail ${label}: ${e.message}`));
+    await page.goto(`${BASE}/h/${every.hh}/decide`, { waitUntil: "networkidle" });
+    const card = page.locator(".decide-card").first();
+    await card.locator(".mail-meta").waitFor({ timeout: 10000 });
+    const text = await card.innerText();
+    ok(/Transaction Alert from Nabil Bank/.test(text) && /Which account is it about/.test(text), `${label}: the card names the email and its sender`);
+    ok(/txn-alert@nabilbank\.com/.test(text) && /Forwarded by/.test(text) && /family@example\.com/.test(text), `${label}: where it came from and who forwarded it`);
+    ok(/ESEWA LOAD/.test(text) && /1,500/.test(text) && /Money out/.test(text), `${label}: what the app can read from it`);
+    ok((await card.locator(".mail-text").innerText()).includes("Available Balance"), `${label}: the email itself`);
+    ok((await card.locator("label.pick").count()) >= 1 && /Remember/.test(text), `${label}: the accounts to choose from, and remembering the sender`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    ok(overflow <= 0, `${label}: nothing runs off the side`);
+    await shot(page, `decide-mail-${label}`, { fullPage: true });
+    if (label === "phone") {
+      await card.getByRole("button", { name: /^Read it for / }).click();
+      await page.waitForFunction(() => !document.querySelector(".decide-card .mail-meta"), null, { timeout: 10000 });
+      ok(true, "phone: one tap links it and Decide moves on");
+      await page.goto(`${BASE}/h/${every.hh}/settings/inbox`, { waitUntil: "networkidle" });
+      const row = page.locator("button.mail-row").filter({ hasText: "Transaction Alert" }).first();
+      const rowText = (await row.innerText()).replace(/\s+/g, " ");
+      ok(/lines in decide|in the book/i.test(rowText), `the Inbox shows it read: ${rowText}`);
+      await row.click();
+      await page.locator(".mail-open .mail-meta").waitFor({ timeout: 10000 });
+      ok(/ESEWA LOAD/.test(await page.locator(".mail-open").innerText()), "and opens to the same details");
+      await shot(page, "inbox-open-phone", { fullPage: true });
+    }
+    await ctx.close();
+  }
+}
+
 await browser.close();
 if (errors.length) throw new Error("page errors:\n" + errors.join("\n"));
 console.log("\nPages: all good.");

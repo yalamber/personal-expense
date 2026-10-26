@@ -235,6 +235,29 @@ export type Statement = {
   verifyCode: { provider: string; code: string | null; link: string | null; requester: string | null } | null;
 };
 
+/** A stored email as a person sees it (GET /statements/:id/preview). */
+export type MailPreview = {
+  id: string;
+  status: StatementStatus;
+  receivedAt: string;
+  subject: string | null;
+  error: string | null;
+  accountId: string | null;
+  sizeBytes: number;
+  from: { name: string | null; address: string } | null;
+  sender: string | null;
+  forwardedBy: string | null;
+  forwardedVia: string | null;
+  sentAt: string | null;
+  attachments: { filename: string; mimeType: string; size: number }[];
+  text: string | null;
+  truncated: boolean;
+  reading: { parserKey: string | null; lines: { kind: "out" | "in"; amountMinor: number; date: string; description: string; rawText: string; confidence: number }[] };
+  accounts: { id: string; name: string; type: AccountType; senders: string[]; level: number; reason: string | null }[];
+  held: "new-sender" | "forwarded" | null;
+  missing: boolean;
+};
+
 export type ReviewLine = {
   id: string;
   statementEmailId: string;
@@ -497,7 +520,8 @@ export const api = {
 
   statements: (id: string) => request<Statement[]>("GET", `${h(id)}/statements`),
   releaseStatement: (id: string, statementId: string, accountId: string | null, remember = true) =>
-    request<{ ok: true; remembered: boolean }>("POST", `${h(id)}/statements/${statementId}/release`, { accountId, remember }),
+    request<{ ok: true; remembered: boolean; sender: string | null }>("POST", `${h(id)}/statements/${statementId}/release`, { accountId, remember }),
+  statementPreview: (id: string, statementId: string) => request<MailPreview>("GET", `${h(id)}/statements/${statementId}/preview`),
   rawStatementUrl: (id: string, statementId: string) => `${h(id)}/statements/${statementId}/raw`,
 
   review: (id: string) => request<ReviewLine[]>("GET", `${h(id)}/review`),

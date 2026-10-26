@@ -92,9 +92,13 @@ Entries on deposits, loans and money lent are moves, never the month's income or
 **Statement emails.** The sender is matched against an account's list using the From header, the
 headers forwarders keep (`X-Original-Sender`, `Resent-From`) and, for a message forwarded by
 hand, the quoted "From:" line, never only the envelope (Gmail rewrites that to a
-`postmaster@…google.com` address). Mail from a sender no account lists waits as a Decide card:
-"An email from … arrived. Which account is it about?", with "remember this sender" on by default,
-or "Not a bank email". Without a bank-specific parser, the generic alert reader
+`postmaster@…google.com` address). Mail from a sender no account lists waits as a Decide card that opens the email
+(`GET /statements/:id/preview`, read from the stored original): why it waits, where it came from
+(the sender, who forwarded it and through which service, when it was sent), what the app can read
+from it, and the email's text. The accounts that take statements are listed with the likely one
+chosen and the reason (already reads this sender, same bank domain, or the bank's name in the
+sender), "remember this sender" on by default, and "Not a bank email". Settings › Inbox lists every
+email and opens each to the same view. Without a bank-specific parser, the generic alert reader
 (`src/worker/ingest/parsers/alerts.ts`) takes one amount next to a debit or credit word, a date
 in the text (Bikram Sambat dates are skipped in favour of the email's own date) and the remarks
 line, and queues the line for review at a confidence below auto-post, so the family sees each

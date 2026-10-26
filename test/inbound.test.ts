@@ -6,7 +6,10 @@ import {
   parseInboundAddress,
   rawMailKeys,
   safeFilename,
+  baseDomain,
   looksLikeForwarder,
+  pickSender,
+  rankAccounts,
   senderCandidates,
   senderMatches,
   forwardingCheck,
@@ -129,5 +132,50 @@ describe("looksLikeForwarder", () => {
     expect(looksLikeForwarder("txn-alert@nabilbank.com")).toBe(false);
     expect(looksLikeForwarder("noreply@nicasiabank.com")).toBe(false);
     expect(looksLikeForwarder("me@gmail.com")).toBe(false);
+  });
+});
+
+describe("pickSender", () => {
+  it("looks past forwarders and the family's own mailboxes", () => {
+    const own = new Set(["yalamber@mundhum.com"]);
+    expect(pickSender(["postmaster@mail-wr1-x436.google.com", "txn-alert@nabilbank.com"], own)).toBe("txn-alert@nabilbank.com");
+    expect(pickSender(["yalamber@mundhum.com", "txn-alert@nabilbank.com"], own)).toBe("txn-alert@nabilbank.com");
+    expect(pickSender(["postmaster@mail.google.com", "yalamber@mundhum.com"], own)).toBeNull();
+  });
+});
+
+describe("baseDomain", () => {
+  it("keeps the registrable part", () => {
+    expect(baseDomain("alerts.mail.nabilbank.com")).toBe("nabilbank.com");
+    expect(baseDomain("nabilbank.com")).toBe("nabilbank.com");
+    expect(baseDomain("ebanking.sbl.com.np")).toBe("sbl.com.np");
+    expect(baseDomain("bank.co.in")).toBe("bank.co.in");
+  });
+});
+
+describe("rankAccounts", () => {
+  const accounts = [
+    { id: "cash", name: "Cash at home", type: "cash", institution: null, statementSenderPattern: null },
+    { id: "nic", name: "NIC Asia salary", type: "checking", institution: "NIC Asia", statementSenderPattern: "alerts@nicasiabank.com" },
+    { id: "nabil", name: "Nabil Bank Saving Account", type: "savings", institution: null, statementSenderPattern: "txn-alert@nabilbank.com" },
+    { id: "esewa", name: "eSewa", type: "wallet", institution: null, statementSenderPattern: null },
+  ];
+  it("puts the account that already lists the sender first", () => {
+    const r = rankAccounts(accounts, "txn-alert@nabilbank.com", "Transaction Alert");
+    expect(r[0]).toEqual({ id: "nabil", level: 3, reason: "already reads mail from this sender" });
+  });
+  it("then one that reads other mail from the same bank's domain", () => {
+    const r = rankAccounts(accounts, "statements@mail.nicasiabank.com", "Monthly statement");
+    expect(r[0]).toMatchObject({ id: "nic", level: 2, reason: "it already reads mail from nicasiabank.com" });
+  });
+  it("then a distinctive word of the account's name in the sender", () => {
+    const r = rankAccounts(accounts, "noreply@esewa.com.np", "Payment successful");
+    expect(r[0]).toMatchObject({ id: "esewa", level: 1 });
+    expect(r[0]!.reason).toContain("Esewa");
+    // "Bank", "Saving" and "Account" are too common to count.
+    expect(rankAccounts(accounts, "info@otherbank.com", "Saving account offer")[0]!.level).toBe(0);
+  });
+  it("keeps the given order when nothing points anywhere", () => {
+    expect(rankAccounts(accounts, null, "").map((r) => r.id)).toEqual(["cash", "nic", "nabil", "esewa"]);
   });
 });

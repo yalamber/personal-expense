@@ -5,6 +5,7 @@ import { api, ApiError, type Account, type Category, type DecideCard, type House
 import { onLinkClick } from "../router";
 import { PageSkeleton } from "../skeleton";
 import { CategorySelect, Checks, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
+import { LinkAccount, MailDetails, MailSkeleton, WhyHeld, senderTitle, useMailPreview, when } from "./MailView";
 
 /**
  * Decide: quick calls that keep the book clean, one card at a time. Every card has two clear
@@ -560,50 +561,33 @@ function RecurringCard({ card, household, accounts, busy, canWrite, act, later }
   );
 }
 
-/** Mail from a sender no account lists yet: say which account it is about, or that it is not a statement. */
-function InboxCard({ card, household, accounts, busy, act, later }: CardProps<"inbox">) {
-  const isAdmin = household.me.role === "admin";
-  const options = accounts.filter((a) => !a.closedAt && ["checking", "savings", "credit", "wallet"].includes(a.type));
-  const [account, setAccount] = useState(options[0]?.id ?? "");
-  const [remember, setRemember] = useState(true);
-  const chosen = options.find((a) => a.id === account);
+/** An email waiting for a person: where it came from, what it says, and which account it is about. */
+function InboxCard({ card, household, busy, act, later }: CardProps<"inbox">) {
+  const { data, error } = useMailPreview(household.id, card.statementId);
+  const forwarded = data?.held === "forwarded";
   return (
-    <section className="decide-card" aria-label="Email from a new sender">
-      <span className="eyebrow" style={{ color: "var(--marigold-deep)" }}>New sender</span>
-      <h2>
-        {/^(?:postmaster|mailer-daemon)@/i.test(card.from) ? "A forwarded email arrived" : `An email from ${card.from} arrived`}
-        {card.subject ? `: "${card.subject}"` : ""}. Which account is it about?
-      </h2>
-      <span className="small" style={{ color: "var(--ink-soft)" }}>
-        Received {shortDate(card.receivedAt.slice(0, 10))}. Only mail from the senders on an account's list is read on its own; everything else waits here for a person.
+    <section className="decide-card" aria-label="Email waiting for an account">
+      <span className="eyebrow" style={{ color: forwarded ? "var(--green-deep)" : "var(--marigold-deep)" }}>
+        {forwarded ? "Held email" : "Email from a new sender"} · arrived {when(card.receivedAt)}
       </span>
-      {isAdmin ? (
-        <>
-          <label style={{ maxWidth: 320 }}>
-            Account
-            <select value={account} onChange={(e) => setAccount(e.target.value)}>
-              {options.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            Remember the sender for this account, so the next one goes straight through
-          </label>
-          <div className="actions">
-            <button type="button" disabled={busy || !account} onClick={() => act(() => api.releaseStatement(household.id, card.statementId, account, remember), `Reading the email for ${chosen?.name ?? "the account"}.`)}>
-              Read it for {chosen?.name ?? "this account"}
-            </button>
-            <button type="button" className="quiet" disabled={busy} onClick={() => act(() => api.dismissStatement(household.id, card.statementId), "Set aside: not a statement.")}>
-              Not a bank email
-            </button>
-            <button type="button" className="quiet" onClick={() => later("Email from a new sender")}>
-              Later
-            </button>
-          </div>
-          <span className="small muted">The lines it finds come back here one by one. The raw email can be downloaded from Settings › Inbox.</span>
-        </>
-      ) : (
-        <span className="small muted">An admin of the household can attach it to an account.</span>
+      <h2>
+        {data ? `${data.subject ?? "An email"} from ${senderTitle(data)}.` : `${card.subject ?? "An email"} arrived.`} Which account is it about?
+      </h2>
+      {error && <div className="error small">{error}</div>}
+      {!data && !error && <MailSkeleton />}
+      {data && <WhyHeld preview={data} />}
+      {data && <MailDetails preview={data} household={household} />}
+      {data && (
+        <LinkAccount
+          household={household}
+          preview={data}
+          busy={busy}
+          onLink={(accountId, name, remember) =>
+            act(() => api.releaseStatement(household.id, card.statementId, accountId, remember), `"${data.subject ?? "The email"}" is being read for ${name}${remember && data.sender ? `; ${data.sender} is remembered` : ""}.`)
+          }
+          onDismiss={() => act(() => api.dismissStatement(household.id, card.statementId), `"${data.subject ?? "The email"}" set aside: not a statement.`)}
+          onLater={() => later("An email")}
+        />
       )}
     </section>
   );
