@@ -1,6 +1,6 @@
 // The pages in a browser: Settings at both widths, skeletons while the API is slow, the warm
 // return to a page, Today's headline arithmetic, Every month, Decide. Needs the seeded household.
-import { BASE, SKIP, cookieFor, launch, ok, suiteArgs } from "./lib.mjs";
+import { BASE, SKIP, cookieFor, launch, ok, sqlLocal, suiteArgs } from "./lib.mjs";
 
 const { json, out } = suiteArgs();
 const [{ hh, cookie, hari }, every] = json;
@@ -256,6 +256,23 @@ if (every) {
       ok(/waits in Decide/.test(await page.locator(".mail-open .ok").innerText()), "phone: filled in, it waits in Decide");
       const overflow2 = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       ok(overflow2 <= 0, "phone: the form fits the screen");
+
+      // One stored as unread that today's readers can read: the Inbox asks only "is this right?".
+      const readable = eml.replace("browser-held-1", "browser-ready-1").replace("NPR 1,500.00", "NPR 2,200.00").replace("ESEWA LOAD 9841XXXXXX", "KHALTI LOAD");
+      await fetch(`${BASE}/cdn-cgi/handler/email?from=${encodeURIComponent("postmaster@mail-wr1-x436.google.com")}&to=${encodeURIComponent(to)}`, { method: "POST", body: readable });
+      await new Promise((res) => setTimeout(res, 2000));
+      sqlLocal(`DELETE FROM import_lines WHERE statement_email_id IN (SELECT id FROM statement_emails WHERE message_id LIKE '%browser-ready-1%'); UPDATE statement_emails SET status = 'unparsed', error = 'read by an older reader', processed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE message_id LIKE '%browser-ready-1%'`);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator("button.mail-row").filter({ hasText: "not read" }).first().click();
+      const ready = page.locator("section[aria-label='Ready to add']");
+      await ready.waitFor({ timeout: 10000 });
+      const readyText = (await ready.innerText()).replace(/\s+/g, " ");
+      ok(/KHALTI LOAD/.test(readyText) && /2,200/.test(readyText) && /Money out/.test(readyText), `phone: it shows what it read, money out and the amount (${readyText.slice(0, 80)})`);
+      ok((await page.locator("form.fill-by-hand").count()) === 0, "phone: and does not ask to fill anything in");
+      await shot(page, "inbox-ready-phone", { fullPage: true });
+      await ready.getByRole("button", { name: "Yes, add it" }).click();
+      await page.locator(".mail-open .ok").waitFor({ timeout: 10000 });
+      ok(/waits in Decide/.test(await page.locator(".mail-open .ok").innerText()), "phone: one tap adds it");
 
       await page.goto(`${BASE}/h/${every.hh}/settings/household`, { waitUntil: "networkidle" });
       const aiCard = page.locator("section[aria-labelledby=ai-h]");

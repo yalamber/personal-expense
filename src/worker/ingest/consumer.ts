@@ -117,6 +117,8 @@ export async function processStatementEmail(job: ParseJob, env: AppEnv): Promise
         parserKey = "ai";
       } else if (read && why) {
         why = `${why} The AI reader found no transaction in it either.`;
+      } else if (!read && why) {
+        why = `${why} The AI reader could not be reached this time.`;
       }
     }
 

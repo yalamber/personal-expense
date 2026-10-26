@@ -1,7 +1,11 @@
 // Shared by the end-to-end suites: a signed-in API client against the local Worker, small date
-// helpers, and a browser when one is installed. The runner (run.mjs) sets E2E_BASE and E2E_LOG.
+// helpers, and a browser when one is installed. The runner (run.mjs) sets E2E_BASE, E2E_LOG and
+// E2E_STATE.
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const BASE = process.env.E2E_BASE ?? "http://localhost:8787";
 /** The Worker's log: sign-in links are printed there (MAILER=log). */
@@ -21,6 +25,17 @@ export const addMonths = (s, n) => {
   return iso(d);
 };
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Runs SQL on the local database behind the running Worker, to set up a state the API cannot make
+ * (an email stored by an older reader, say). Only under the runner, which sets E2E_STATE.
+ */
+export function sqlLocal(sql) {
+  const state = process.env.E2E_STATE;
+  if (!state) throw new Error("sqlLocal needs E2E_STATE (run the suite through run.mjs)");
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  execFileSync("npx", ["wrangler", "d1", "execute", "personal-expense", "--local", "--persist-to", state, "--command", sql], { cwd: root, stdio: "ignore" });
+}
 
 const linksInLog = () => [...readFileSync(LOG, "utf8").matchAll(/(http:\/\/localhost:\d+\/api\/auth\/callback\?token=[^\s]+)/g)].map((m) => m[1]);
 

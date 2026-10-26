@@ -24,6 +24,7 @@ import { bookBalance, loadAccountViews, loadGoals, loadPlanEvents, loanCommitmen
 import { summarize } from "../../ledger/summary";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
+import { rereadStale } from "../../ingest/reread";
 
 export const homeRoutes = new Hono<HonoEnv>();
 
@@ -413,6 +414,8 @@ homeRoutes.post("/decide/snooze", requireWriter, async (c) => {
 homeRoutes.get("/today", async (c) => {
   const db = c.get("db");
   const household = c.get("household");
+  // Emails older readers gave up on are read again in the background; their lines reach Decide.
+  await rereadStale(db, c.env, c.executionCtx, household.id).catch((err) => console.warn("[reread]", err));
   const today = todayIn(household.timezone);
   const month = today.slice(0, 7);
   // The figures run from the last payday to the next one (the calendar month when payday is the 1st).

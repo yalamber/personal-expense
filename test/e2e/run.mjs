@@ -16,7 +16,7 @@ const wanted = new Set(process.argv.slice(2));
 const state = mkdtempSync(join(tmpdir(), "family-money-e2e-"));
 const log = join(state, "wrangler.log");
 const shots = process.env.E2E_SHOTS ?? null;
-const env = { ...process.env, E2E_BASE: BASE, E2E_LOG: log };
+const env = { ...process.env, E2E_BASE: BASE, E2E_LOG: log, E2E_STATE: state };
 
 const sh = (cmd) => execSync(cmd, { cwd: root, stdio: "inherit" });
 if (!process.env.E2E_SKIP_BUILD) sh("npm run build");

@@ -345,9 +345,23 @@ const localDay = (iso: string) => {
  * The line goes through the same checks as a read alert: an entry already in the book is confirmed
  * rather than doubled.
  */
-export function FillByHand({ household, preview: p, busy, onSubmit }: { household: Household; preview: MailPreview; busy: boolean; onSubmit: (body: FillBody) => void }) {
+export function FillByHand({
+  household,
+  preview: p,
+  busy,
+  onSubmit,
+  onDismiss,
+}: {
+  household: Household;
+  preview: MailPreview;
+  busy: boolean;
+  onSubmit: (body: FillBody) => void;
+  onDismiss?: () => void;
+}) {
   const cur = household.currency;
-  const g = p.reading.guess ?? null;
+  // Start from what the reader found: a line it read, or the amount and hints it saw.
+  const line = p.reading.lines[0];
+  const g = line ? { amountMinor: line.amountMinor, kind: line.kind, date: line.date, description: line.description } : (p.reading.guess ?? null);
   const [direction, setDirection] = useState<"out" | "in" | null>(g?.kind ?? null);
   const [amount, setAmount] = useState(g?.amountMinor ? amountInput(g.amountMinor, cur) : "");
   const [date, setDate] = useState(g?.date ?? localDay(p.sentAt ?? p.receivedAt));
@@ -363,7 +377,7 @@ export function FillByHand({ household, preview: p, busy, onSubmit }: { househol
     >
       <span className="eyebrow">Say what it is</span>
       <span className="small" style={{ color: "var(--ink-soft)" }}>
-        {g?.amountMinor ? `It mentions ${formatMoney(g.amountMinor, cur)}; say which way it went and check the rest.` : "Put in what the email says."} If the same payment is already in the book, it is confirmed, not added twice.
+        {g?.amountMinor && g.kind ? "Filled in from the email; check it and add it." : g?.amountMinor ? `It mentions ${formatMoney(g.amountMinor, cur)}; say which way it went and check the rest.` : "Put in what the email says."} If the same payment is already in the book, it is confirmed, not added twice.
       </span>
       <div className="seg" role="group" aria-label="Direction">
         <button type="button" aria-pressed={direction === "out"} onClick={() => setDirection("out")}>
@@ -391,8 +405,52 @@ export function FillByHand({ household, preview: p, busy, onSubmit }: { househol
         <button type="submit" disabled={busy || !direction || !amount.trim() || !date}>
           {direction ? `Add it as money ${direction}` : "Choose money out or in"}
         </button>
+        {onDismiss && (
+          <button type="button" className="quiet" disabled={busy} onClick={onDismiss}>
+            Not a payment: set it aside
+          </button>
+        )}
       </div>
     </form>
+  );
+}
+
+/**
+ * An unread email the readers can now read: what they found, to add with one tap (it goes to
+ * Decide like any alert), change, or set aside.
+ */
+export function ReadyToAdd({ household, preview: p, busy, onAdd, onChange, onDismiss }: { household: Household; preview: MailPreview; busy: boolean; onAdd: () => void; onChange: () => void; onDismiss: () => void }) {
+  const cur = household.currency;
+  return (
+    <section className="fill-by-hand stack" aria-label="Ready to add">
+      <span className="eyebrow">Read: is this right?</span>
+      {p.reading.lines.map((l, i) => (
+        <div key={i} className="mail-line">
+          <div className="top">
+            <strong style={{ minWidth: 0, overflowWrap: "anywhere" }}>{l.description}</strong>
+            <span className={`amt ${l.kind === "in" ? "amount-in" : ""}`}>
+              {l.kind === "in" ? "+" : "−"}
+              {formatMoney(l.amountMinor, cur)}
+            </span>
+          </div>
+          <span className="small muted">
+            {l.kind === "in" ? "Money in" : "Money out"} on {shortDate(l.date)}
+          </span>
+        </div>
+      ))}
+      <span className="small" style={{ color: "var(--ink-soft)" }}>Add it and it waits in Decide with a suggested category, checked against what is already in the book.</span>
+      <div className="actions">
+        <button type="button" disabled={busy} onClick={onAdd}>
+          {p.reading.lines.length === 1 ? "Yes, add it" : `Yes, add these ${p.reading.lines.length}`}
+        </button>
+        <button type="button" className="secondary" disabled={busy} onClick={onChange}>
+          Change it
+        </button>
+        <button type="button" className="quiet" disabled={busy} onClick={onDismiss}>
+          Not a payment
+        </button>
+      </div>
+    </section>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Household, type Statement, type StatementStatus } from "../api";
 import { PageSkeleton } from "../skeleton";
-import { FillByHand, LinkAccount, MailDetails, MailSkeleton, WhyHeld, filledMessage, useMailPreview, when } from "./MailView";
+import { FillByHand, LinkAccount, MailDetails, MailSkeleton, ReadyToAdd, WhyHeld, filledMessage, useMailPreview, when } from "./MailView";
 
 /** What each status means to the family, and whether it waits on them. */
 const STATUS: Record<StatementStatus, { label: string; tone: "amber" | "teal" | "grey"; waits: boolean }> = {
@@ -118,7 +118,9 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [changing, setChanging] = useState(false);
   const isAdmin = household.me.role === "admin";
+  const unread = (st.status === "unparsed" || st.status === "failed") && Boolean(st.accountId) && household.me.role !== "viewer" && !done;
 
   async function run<T>(fn: () => Promise<T>, message: string | ((result: T) => string)) {
     setBusy(true);
@@ -165,8 +167,8 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
             />
           ) : (
             <div className="row" style={{ gap: 12 }}>
-              {(st.status === "unparsed" || st.status === "failed") && st.accountId && household.me.role !== "viewer" && !done && (
-                <button type="button" className="secondary" disabled={busy} onClick={() => run(() => api.rereadStatement(household.id, st.id), "Reading it again. Any lines it finds wait in Decide.")}>
+              {unread && !data.reading.lines.length && (
+                <button type="button" className="secondary" disabled={busy} onClick={() => run(() => api.rereadStatement(household.id, st.id), "Reading it again, with the AI reader if the others find nothing. Any lines it finds wait in Decide.")}>
                   Read it again
                 </button>
               )}
@@ -177,12 +179,23 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
               )}
             </div>
           )}
-          {(st.status === "unparsed" || st.status === "failed") && st.accountId && household.me.role !== "viewer" && !done && !data.missing && (
+          {unread && !data.missing && data.reading.lines.length > 0 && !changing && (
+            <ReadyToAdd
+              household={household}
+              preview={data}
+              busy={busy}
+              onAdd={() => run(() => api.rereadStatement(household.id, st.id), "Added. It waits in Decide with a suggested category: file it there, or leave it out.")}
+              onChange={() => setChanging(true)}
+              onDismiss={() => run(() => api.dismissStatement(household.id, st.id), "Set aside: not a payment.")}
+            />
+          )}
+          {unread && !data.missing && (!data.reading.lines.length || changing) && (
             <FillByHand
               household={household}
               preview={data}
               busy={busy}
               onSubmit={(body) => void run(() => api.fillStatement(household.id, st.id, body), filledMessage)}
+              onDismiss={() => run(() => api.dismissStatement(household.id, st.id), "Set aside: not a payment.")}
             />
           )}
         </>

@@ -1,6 +1,6 @@
 // End to end, the core: sign-in, a household, accounts, logging and the twin check, categories,
 // envelopes, goals, statements by email on the subdomain. Runs against the Worker from run.mjs.
-import { BASE, LOG, addDays, addMonths, iso, newClient, ok, sleep } from "./lib.mjs";
+import { BASE, LOG, addDays, addMonths, iso, newClient, ok, sleep, sqlLocal } from "./lib.mjs";
 
 const { call, signIn, state } = newClient(`core-${Date.now()}@example.com`);
 await signIn();
@@ -120,8 +120,14 @@ const mail = (from, subject, body, extraHeaders = []) =>
 const deliver = async (envelopeFrom, eml) => {
   const r = await fetch(`${BASE}/cdn-cgi/handler/email?from=${encodeURIComponent(envelopeFrom)}&to=${inboundTo}`, { method: "POST", body: eml });
   if (r.status >= 300) throw new Error(`email handler answered ${r.status}`);
-  await sleep(1500);
-  return (await call("GET", `${H}/statements`, null, 200)).data[0];
+  // Reading runs after the handler answers; wait until it has finished (or 10 seconds).
+  let row;
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    row = (await call("GET", `${H}/statements`, null, 200)).data[0];
+    if (row && row.status !== "received") break;
+  }
+  return row;
 };
 const nabil = (await call("POST", `${H}/accounts`, { name: "Nabil savings", type: "savings", balance: "50,000", statementSenderPattern: "txn-alert@nabilbank.com" }, 201)).data.id;
 
@@ -211,6 +217,16 @@ ok(st.status === "review", `an indented table template is read (${st.status}: ${
 review = (await call("GET", `${H}/review`, null, 200)).data;
 ok(review.some((l) => l.amountMinor === -310000 && /NEA BILL/.test(l.description ?? "")), "as Rs 3,100 out to NEA BILL, not as money in from the footer's 'received'");
 
+// An email an older reader gave up on is read again by itself the next time the app is opened.
+const indentedId = st.id;
+sqlLocal(`DELETE FROM import_lines WHERE statement_email_id = '${indentedId}'; UPDATE statement_emails SET status = 'unparsed', parser_key = 'alert-text', error = 'read by an older reader', processed_at = '2026-01-01T00:00:00.000Z' WHERE id = '${indentedId}'`);
+await call("GET", `${H}/today`, null, 200); // opening the app is enough
+await sleep(1500);
+st = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id === indentedId);
+ok(st.status === "review" && !st.error, `and read again with today's readers (${st.status})`);
+review = (await call("GET", `${H}/review`, null, 200)).data;
+ok(review.filter((l) => l.statementEmailId === indentedId).length === 1, "once: its line waits in Decide a single time");
+
 // An email the readers cannot place can be filled in by hand, and goes through the same checks.
 const vague = ["From: Nabil Bank <txn-alert@nabilbank.com>", `To: stmt+${token}@statements.leadbase.stream`, "Subject: Transaction Alert", `Date: ${new Date().toUTCString()}`, "Message-ID: <vague-1@e2e.example>", "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "",
   "Dear Customer, fund transfer of NPR 7,500.00 to RAM BAHADUR, ref 991 on 25/10/2026."].join("\r\n");
@@ -231,7 +247,11 @@ ok((await call("POST", `${H}/statements/${st.id}/lines`, { amount: "7,500", dire
 // readers above said nothing about what the AI found.
 let house = (await call("GET", H, null, 200)).data;
 ok(house.aiEnabled === true && typeof house.aiAvailable === "boolean", "AI help is on by default");
-ok(!/AI reader/.test(st.error ?? "") && !(await call("GET", `${H}/statements`, null, 200)).data.some((x) => /AI reader found/.test(x.error ?? "")), "an AI that could not be asked is not reported as having found nothing");
+const mails = (await call("GET", `${H}/statements`, null, 200)).data;
+ok(/could not be reached/.test(mails.find((x) => x.id === otp)?.error ?? "") && !mails.some((x) => /AI reader found/.test(x.error ?? "")), "an AI that could not be asked is reported as such, not as having found nothing");
+const aside = mails.find((x) => x.id === otp);
+await call("POST", `${H}/statements/${otp}/dismiss`, {}, 200);
+ok((await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id === otp)?.status === "done", `an unread email that is not a payment can be set aside (${aside?.status})`);
 await call("PATCH", H, { aiEnabled: false }, 200);
 house = (await call("GET", H, null, 200)).data;
 ok(house.aiEnabled === false, "an admin can turn AI help off");

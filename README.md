@@ -117,7 +117,10 @@ row, else the text (Bikram Sambat dates are skipped in favour of the email's own
 remarks, and queues the line for review at a confidence below auto-post, so the family sees each
 alert once in Decide. Where it finds nothing, **Workers AI** reads the email
 (`src/worker/ai/read.ts`); an amount it gives is kept only if it is written in the email and not
-only as a balance, and its lines wait in Decide like any alert. An email still unread says why
+only as a balance, and its lines wait in Decide like any alert. When the readers improve
+(`READERS_UPDATED_AT` in `src/worker/ingest/reread.ts`), emails older readers gave up on are read
+again by themselves the next time the app is opened. An unread email the readers can now read shows
+what they found with "Yes, add it", "Change it" and "Not a payment". One still unread says why
 ("It has an amount, 7,500.00, but nothing saying whether that went out or came in") and can be
 filled in by hand from the Inbox, starting from what was found; the line goes through the same
 duplicate checks. Admins can download any email as `.eml` from Settings › Inbox; one sample per

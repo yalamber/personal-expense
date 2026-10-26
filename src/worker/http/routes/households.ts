@@ -9,6 +9,7 @@ import { aiFor } from "../../ai";
 import { aiCategorizePending } from "../../ai/categorize";
 import { buildPreview, loadRaw, realSender } from "../../ingest/preview";
 import { ingestLines, refreshStatementStatus } from "../../ingest/pipeline";
+import { markForReread, rereadStale } from "../../ingest/reread";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
 import { idempotent, readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
@@ -150,8 +151,9 @@ scoped.post("/members", requireAdmin, async (c) => {
   }
 });
 
-/** Inbox of statement emails, newest first. */
+/** Inbox of statement emails, newest first. Unread ones the readers have since learned to read are read again. */
 scoped.get("/statements", async (c) => {
+  await rereadStale(c.get("db"), c.env, c.executionCtx, c.get("household").id);
   const rows = await c
     .get("db")
     .select({
@@ -176,15 +178,15 @@ scoped.get("/statements", async (c) => {
   return c.json(rows.map((r) => ({ ...r, attachments: JSON.parse(r.attachments), verifyCode: r.verifyCode ? (JSON.parse(r.verifyCode) as unknown) : null })));
 });
 
-/** A forwarding check the family has dealt with, or mail from a new sender that is not a statement. */
+/** A forwarding check the family has dealt with, mail from a new sender that is not a statement, or an unread email that is not a payment. */
 scoped.post("/statements/:statementId/dismiss", requireWriter, async (c) => {
   const db = c.get("db");
   const row = await db.query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });
   if (!row) return c.json({ error: "not found" }, 404);
-  if (row.status !== "forwarding" && row.status !== "quarantined") return c.json({ error: "only forwarding checks and mail from new senders can be dismissed" }, 409);
+  if (!["forwarding", "quarantined", "unparsed", "failed"].includes(row.status)) return c.json({ error: "only forwarding checks, mail from new senders and unread emails can be set aside" }, 409);
   await db
     .update(schema.statementEmails)
-    .set({ status: "done", error: row.status === "quarantined" ? "set aside: not a statement" : row.error })
+    .set({ status: "done", error: row.status === "quarantined" ? "set aside: not a statement" : row.status === "forwarding" ? row.error : "set aside: not a payment" })
     .where(eq(schema.statementEmails.id, row.id));
   return c.json({ ok: true });
 });
@@ -234,10 +236,7 @@ scoped.post("/statements/:statementId/reread", requireWriter, async (c) => {
   if (!row) return c.json({ error: "not found" }, 404);
   if (row.status !== "unparsed" && row.status !== "failed") return c.json({ error: "only an email that was not read can be read again" }, 409);
   if (!row.accountId) return c.json({ error: "link it to an account first" }, 409);
-  // A failed read may have left lines waiting; they are read afresh.
-  await db.delete(schema.importLines).where(and(eq(schema.importLines.statementEmailId, row.id), eq(schema.importLines.decision, "pending")));
-  await db.update(schema.statementEmails).set({ status: "received", error: null, parserKey: null, processedAt: null }).where(eq(schema.statementEmails.id, row.id));
-  await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
+  if (await markForReread(db, row.id)) await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
   return c.json({ ok: true });
 });
 

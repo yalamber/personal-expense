@@ -314,18 +314,18 @@ function CategoryCard({
 }) {
   const [categoryId, setCategoryId] = useState<string | null>(card.suggestedCategoryId);
   const isIn = card.totalMinor > 0;
-  const lines = card.count === 1 ? "payment" : "payments";
+  const amount = formatMoney(Math.abs(card.totalMinor), household.currency);
+  const when = `${card.firstDate ? shortDate(card.firstDate) : ""}${card.lastDate && card.lastDate !== card.firstDate ? ` to ${shortDate(card.lastDate)}` : ""}`;
   return (
     <section className="decide-card" aria-label="Needs a category">
-      <span className="eyebrow">Needs a category · {card.accountName ?? "statement"}</span>
+      <span className="eyebrow">
+        {isIn ? "Money in" : "Money out"} · {card.accountName ?? "statement"}
+      </span>
       <h2>
-        {card.count > 1 ? `${card.count} ${lines} ${isIn ? "from" : "to"} ` : isIn ? "Money in from " : ""}
-        {card.description}
+        {card.count > 1 ? `${card.count} payments ${isIn ? "from" : "to"} ${card.description}` : `${amount} ${isIn ? "from" : "to"} ${card.description}`}
       </h2>
       <span className="small muted">
-        {formatMoney(Math.abs(card.totalMinor), household.currency)} in all
-        {card.firstDate ? ` · ${shortDate(card.firstDate)}` : ""}
-        {card.lastDate && card.lastDate !== card.firstDate ? ` to ${shortDate(card.lastDate)}` : ""}. One choice files every one, and the next ones too.
+        {card.count > 1 ? `${amount} in all · ${when}. One choice files every one, and the next ones too.` : `${when}${when ? ". " : ""}Is it ours? Choose where it goes; the app remembers this name.`}
       </span>
       {canWrite && (
         <>

@@ -227,7 +227,8 @@ export function whyUnread(text: string, fallback: Date | null): Unread {
   const all = mentions(flat);
   const tx = all.filter((a) => !a.balance);
   const values = [...new Set(tx.map((a) => a.minor))];
-  const guess = { amountMinor: values.length === 1 ? values[0]! : null, kind: null, date: findDate(text, fallback)?.date ?? null, description: describe(text, flat, -1) };
+  // A weak hint for the form (payment, purchase, salary, refund…), for a person to confirm.
+  const guess = { amountMinor: values.length === 1 ? values[0]! : null, kind: kindIn(blank(flat)), date: findDate(text, fallback)?.date ?? null, description: describe(text, flat, -1) };
   if (!all.length) return { why: "No amount in it: nothing after NPR or Rs, or next to the word Amount.", guess };
   if (!tx.length) return { why: `The only amount in it looks like a balance (${all[0]!.raw}).`, guess };
   if (values.length > 1) return { why: `It has ${values.length} amounts (${tx.slice(0, 3).map((a) => a.raw).join(", ")}) and nothing saying which one moved.`, guess };
