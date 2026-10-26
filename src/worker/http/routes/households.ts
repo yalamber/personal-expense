@@ -4,7 +4,7 @@ import { parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { dispatchParse } from "../../ingest/dispatch";
 import { ensureCategories } from "../../ledger/categories";
-import { inboundAddressFor } from "../../lib/inbound";
+import { inboundAddressFor, looksLikeForwarder, senderMatches } from "../../lib/inbound";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
 import { idempotent, readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
@@ -167,29 +167,53 @@ scoped.get("/statements", async (c) => {
   return c.json(rows.map((r) => ({ ...r, attachments: JSON.parse(r.attachments), verifyCode: r.verifyCode ? (JSON.parse(r.verifyCode) as unknown) : null })));
 });
 
-/** A forwarding check the family has dealt with. */
+/** A forwarding check the family has dealt with, or mail from a new sender that is not a statement. */
 scoped.post("/statements/:statementId/dismiss", requireWriter, async (c) => {
   const db = c.get("db");
   const row = await db.query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });
   if (!row) return c.json({ error: "not found" }, 404);
-  if (row.status !== "forwarding") return c.json({ error: "only forwarding checks can be dismissed" }, 409);
-  await db.update(schema.statementEmails).set({ status: "done" }).where(eq(schema.statementEmails.id, row.id));
+  if (row.status !== "forwarding" && row.status !== "quarantined") return c.json({ error: "only forwarding checks and mail from new senders can be dismissed" }, 409);
+  await db
+    .update(schema.statementEmails)
+    .set({ status: "done", error: row.status === "quarantined" ? "set aside: not a statement" : row.error })
+    .where(eq(schema.statementEmails.id, row.id));
   return c.json({ ok: true });
 });
 
-/** Admin only: move a quarantined email to the queue after attaching it to an account. */
+/**
+ * Admin only: attach mail from a new sender to an account and read it. With `remember`, the
+ * sender joins that account's list, so the next one goes straight through.
+ */
 scoped.post("/statements/:statementId/release", requireAdmin, async (c) => {
-  const body = await readJson<{ accountId?: string }>(c);
+  const body = await readJson<{ accountId?: string; remember?: boolean }>(c);
   const db = c.get("db");
   const row = await db.query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });
   if (!row) return c.json({ error: "not found" }, 404);
   if (row.status !== "quarantined") return c.json({ error: "only quarantined emails can be released" }, 409);
-  await db
-    .update(schema.statementEmails)
-    .set({ status: "received", accountId: body.accountId ?? row.accountId, error: null })
-    .where(eq(schema.statementEmails.id, row.id));
+  const accountId = body.accountId ?? row.accountId;
+  if (!accountId) return c.json({ error: "choose the account this email is about" }, 400);
+  const account = await db.query.accounts.findFirst({ where: and(eq(schema.accounts.id, accountId), eq(schema.accounts.householdId, row.householdId)) });
+  if (!account || account.type === "person") return c.json({ error: "account not found" }, 404);
+  let remembered = false;
+  if (body.remember !== false && row.fromAddress.includes("@") && !looksLikeForwarder(row.fromAddress) && !senderMatches(account.statementSenderPattern, row.fromAddress)) {
+    const pattern = [account.statementSenderPattern?.trim(), row.fromAddress.toLowerCase()].filter(Boolean).join(", ");
+    await db.update(schema.accounts).set({ statementSenderPattern: pattern }).where(eq(schema.accounts.id, account.id));
+    remembered = true;
+  }
+  await db.update(schema.statementEmails).set({ status: "received", accountId: account.id, error: null }).where(eq(schema.statementEmails.id, row.id));
   await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
-  return c.json({ ok: true });
+  return c.json({ ok: true, remembered });
+});
+
+/** Admin only: the raw message as it arrived (.eml), for a look or to send in as a parser sample. */
+scoped.get("/statements/:statementId/raw", requireAdmin, async (c) => {
+  const row = await c.get("db").query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, c.get("household").id)) });
+  if (!row) return c.json({ error: "not found" }, 404);
+  const object = await c.env.RAW_MAIL.get(row.r2Key);
+  if (!object) return c.json({ error: "the raw message is no longer stored" }, 404);
+  return new Response(object.body, {
+    headers: { "content-type": "message/rfc822", "content-disposition": `attachment; filename="statement-${row.id.slice(0, 8)}.eml"`, "cache-control": "private, no-store" },
+  });
 });
 
 scoped.route("/", accountRoutes);

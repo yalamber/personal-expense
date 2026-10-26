@@ -14,7 +14,8 @@ import PostalMime from "postal-mime";
 import { getDb, schema } from "../db";
 import type { AppEnv } from "../env";
 import { newId } from "../lib/ids";
-import { extractEmail, forwardingCheck, parseInboundAddress, rawMailKeys, senderMatches } from "../lib/inbound";
+import { extractEmail, forwardingCheck, parseInboundAddress, rawMailKeys, senderCandidates, senderMatches } from "../lib/inbound";
+import { plainText } from "./parsers/text";
 import { dispatchParse } from "./dispatch";
 
 const MAX_RAW_BYTES = 25 * 1024 * 1024;
@@ -39,9 +40,12 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
     return;
   }
 
-  const from = extractEmail(message.from);
+  // The sender people recognise is the From header; the envelope is often a forwarder's.
+  const envelopeFrom = extractEmail(message.from);
+  let candidates = senderCandidates(message.from, message.headers);
   const accounts = await db.query.accounts.findMany({ where: eq(schema.accounts.householdId, household.id) });
-  const matched = accounts.find((a) => senderMatches(a.statementSenderPattern, from));
+  const matchAccount = () => accounts.find((a) => candidates.some((c) => senderMatches(a.statementSenderPattern, c)));
+  let matched = matchAccount();
 
   const statementEmailId = newId();
   const keys = rawMailKeys(household.id, statementEmailId);
@@ -52,23 +56,33 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
   const rawBody = message.raw.pipeThrough(new FixedLengthStream(message.rawSize));
   await env.RAW_MAIL.put(keys.raw, rawBody, {
     httpMetadata: { contentType: "message/rfc822" },
-    customMetadata: { householdId: household.id, statementEmailId, from, receivedAt: new Date().toISOString() },
+    customMetadata: { householdId: household.id, statementEmailId, from: candidates[0] ?? envelopeFrom, receivedAt: new Date().toISOString() },
   });
 
   // Gmail asks the new forwarding address to confirm before it forwards anything. Keep the code
   // where the family can see it, instead of quarantining the message as an unknown sender.
-  let check = forwardingCheck(from, subject);
-  if (check && (!check.code || !check.link)) {
+  let check = candidates.map((c) => forwardingCheck(c, subject)).find(Boolean) ?? null;
+  // A hand-forwarded message names the bank only in its quoted header block, and a forwarding
+  // check may keep its code in the body: both need the body, which is read back from storage.
+  if ((check && (!check.code || !check.link)) || (!check && !matched)) {
     try {
       const stored = await env.RAW_MAIL.get(keys.raw);
       if (stored) {
         const parsed = await new PostalMime().parse(await stored.arrayBuffer());
-        check = forwardingCheck(from, subject, `${parsed.text ?? ""}\n${parsed.html ?? ""}`) ?? check;
+        const body = `${parsed.text ?? ""}\n${plainText(parsed.html ?? "")}`;
+        if (check) check = forwardingCheck(envelopeFrom, subject, body) ?? check;
+        else {
+          candidates = senderCandidates(message.from, message.headers, body);
+          matched = matchAccount();
+        }
       }
     } catch (err) {
-      console.log(`[email] could not read forwarding check body: ${String(err)}`);
+      console.log(`[email] could not read the message body: ${String(err)}`);
     }
   }
+  // The address kept with the email is the one that matched (the bank behind a hand-forward), else the From header.
+  const from = (matched && candidates.find((c) => senderMatches(matched!.statementSenderPattern, c))) || candidates[0] || envelopeFrom;
+  const forwarded = from !== envelopeFrom ? ` (forwarded by ${envelopeFrom})` : "";
 
   const status = check ? "forwarding" : matched ? "received" : "quarantined";
   try {
@@ -83,7 +97,7 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
       rawSize: message.rawSize,
       r2Key: keys.raw,
       status,
-      error: check || matched ? null : "sender is not on any account's allowlist",
+      error: check || matched ? null : `${from} is not on any account's list of senders${forwarded}`,
       verifyCode: check ? JSON.stringify(check) : null,
     });
   } catch (err) {
@@ -96,5 +110,5 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
   if (matched && !check) {
     await dispatchParse(env, ctx, { kind: "parse-statement-email", statementEmailId, householdId: household.id });
   }
-  console.log(`[email] stored ${statementEmailId} status=${status} from=${from} household=${household.id}`);
+  console.log(`[email] stored ${statementEmailId} status=${status} from=${from}${forwarded} household=${household.id}`);
 }

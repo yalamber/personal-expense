@@ -54,6 +54,7 @@ function tidyDown(minor: number, currency: string): number {
 
 export type DecideCard =
   | { kind: "forwarding"; key: string; statementId: string; code: string | null; link: string | null; requester: string | null; receivedAt: string }
+  | { kind: "inbox"; key: string; statementId: string; from: string; subject: string | null; receivedAt: string; note: string | null }
   | {
       kind: "twin";
       key: string;
@@ -129,6 +130,12 @@ async function forwardingCards(db: Db, householdId: string): Promise<DecideCard[
     const v = r.verifyCode ? (JSON.parse(r.verifyCode) as { code?: string | null; link?: string | null; requester?: string | null }) : {};
     return { kind: "forwarding", key: `fwd:${r.id}`, statementId: r.id, code: v.code ?? null, link: v.link ?? null, requester: v.requester ?? null, receivedAt: r.receivedAt };
   });
+}
+
+/** Mail from a sender no account lists yet: which account is it for, or is it not a statement? */
+async function inboxCards(db: Db, householdId: string): Promise<DecideCard[]> {
+  const rows = await db.query.statementEmails.findMany({ where: and(eq(schema.statementEmails.householdId, householdId), eq(schema.statementEmails.status, "quarantined")), orderBy: [desc(schema.statementEmails.receivedAt)], limit: 5 });
+  return rows.map((r) => ({ kind: "inbox", key: `inbox:${r.id}`, statementId: r.id, from: r.fromAddress, subject: r.subject, receivedAt: r.receivedAt, note: r.error }));
 }
 
 async function lineCards(db: Db, householdId: string, memberId: string): Promise<DecideCard[]> {
@@ -319,8 +326,9 @@ export async function loadDecideCards(c: AppContext, recurring?: RecurringRow[])
   const today = todayIn(household.timezone);
   const month = today.slice(0, 7);
   const accounts = await loadAccountViews(db, household.id, today);
-  const [fwd, lines, balances, plan, every] = await Promise.all([
+  const [fwd, inbox, lines, balances, plan, every] = await Promise.all([
     forwardingCards(db, household.id),
+    inboxCards(db, household.id),
     lineCards(db, household.id, memberId),
     balanceCards(db, household.id, memberId),
     planCards(db, household, accounts),
@@ -329,7 +337,7 @@ export async function loadDecideCards(c: AppContext, recurring?: RecurringRow[])
   const twins = lines.filter((x) => x.kind === "twin");
   const categories = lines.filter((x) => x.kind === "category");
   // Forwarding checks and deadlines first, then anything that could count money twice, then the month's bills.
-  return [...fwd, ...deadlineCards(accounts, today), ...twins, ...balances, ...recurringCards(every, month), ...plan, ...categories];
+  return [...fwd, ...inbox, ...deadlineCards(accounts, today), ...twins, ...balances, ...recurringCards(every, month), ...plan, ...categories];
 }
 
 homeRoutes.get("/decide", async (c) => c.json(await loadDecideCards(c)));
@@ -360,7 +368,7 @@ homeRoutes.get("/today", async (c) => {
   const { from, to } = monthRange(month);
 
   const recurring = await loadRecurring(db, household.id, month, today);
-  const [categories, txs, budgets, goals, basis, moved, cards, lastLines] = await Promise.all([
+  const [categories, txs, budgets, goals, basis, moved, cards, mailCounts, lastLines] = await Promise.all([
     db.query.categories.findMany({ where: eq(schema.categories.householdId, household.id) }),
     db
       .select({ amountMinor: schema.transactions.amountMinor, direction: schema.transactions.direction, categoryId: schema.transactions.categoryId, transferPairId: schema.transactions.transferPairId })
@@ -383,6 +391,11 @@ homeRoutes.get("/today", async (c) => {
         ),
       ),
     loadDecideCards(c, recurring),
+    db
+      .select({ status: schema.statementEmails.status, n: sql<number>`count(*)` })
+      .from(schema.statementEmails)
+      .where(and(eq(schema.statementEmails.householdId, household.id), inArray(schema.statementEmails.status, ["quarantined", "unparsed", "failed", "received"])))
+      .groupBy(schema.statementEmails.status),
     db
       .select({ accountId: schema.statementEmails.accountId, last: sql<string>`max(${schema.importLines.parsedDate})` })
       .from(schema.importLines)
@@ -474,6 +487,8 @@ homeRoutes.get("/today", async (c) => {
     bank,
     bookMatchesThrough: twins === 0 && questions.size === 0 && seen.length ? seen[seen.length - 1] : null,
     decideCount: cards.length,
+    // Statement emails that arrived but did not become lines: new senders, unreadable ones, failures, still queued.
+    mail: { newSender: Number(mailCounts.find((m) => m.status === "quarantined")?.n ?? 0), unread: mailCounts.filter((m) => m.status !== "quarantined").reduce((sum, m) => sum + Number(m.n), 0) },
     nextGoal: next,
   });
 });

@@ -141,6 +141,8 @@ export function Decide({ household, accounts, categories, version, onChanged }: 
         </section>
       )}
 
+      {card?.kind === "inbox" && <InboxCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
+
       {card?.kind === "twin" && (
         <section className="decide-card" aria-label="Possible double entry">
           <span className="eyebrow" style={{ color: "var(--marigold-deep)" }}>Possible double entry</span>
@@ -553,6 +555,55 @@ function RecurringCard({ card, household, accounts, busy, canWrite, act, later }
           </div>
           <span className="small muted">A different amount this time? Log it from the + button and pick {card.name} from the chips.</span>
         </>
+      )}
+    </section>
+  );
+}
+
+/** Mail from a sender no account lists yet: say which account it is about, or that it is not a statement. */
+function InboxCard({ card, household, accounts, busy, act, later }: CardProps<"inbox">) {
+  const isAdmin = household.me.role === "admin";
+  const options = accounts.filter((a) => !a.closedAt && ["checking", "savings", "credit", "wallet"].includes(a.type));
+  const [account, setAccount] = useState(options[0]?.id ?? "");
+  const [remember, setRemember] = useState(true);
+  const chosen = options.find((a) => a.id === account);
+  return (
+    <section className="decide-card" aria-label="Email from a new sender">
+      <span className="eyebrow" style={{ color: "var(--marigold-deep)" }}>New sender</span>
+      <h2>
+        {/^(?:postmaster|mailer-daemon)@/i.test(card.from) ? "A forwarded email arrived" : `An email from ${card.from} arrived`}
+        {card.subject ? `: "${card.subject}"` : ""}. Which account is it about?
+      </h2>
+      <span className="small" style={{ color: "var(--ink-soft)" }}>
+        Received {shortDate(card.receivedAt.slice(0, 10))}. Only mail from the senders on an account's list is read on its own; everything else waits here for a person.
+      </span>
+      {isAdmin ? (
+        <>
+          <label style={{ maxWidth: 320 }}>
+            Account
+            <select value={account} onChange={(e) => setAccount(e.target.value)}>
+              {options.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+            Remember the sender for this account, so the next one goes straight through
+          </label>
+          <div className="actions">
+            <button type="button" disabled={busy || !account} onClick={() => act(() => api.releaseStatement(household.id, card.statementId, account, remember), `Reading the email for ${chosen?.name ?? "the account"}.`)}>
+              Read it for {chosen?.name ?? "this account"}
+            </button>
+            <button type="button" className="quiet" disabled={busy} onClick={() => act(() => api.dismissStatement(household.id, card.statementId), "Set aside: not a statement.")}>
+              Not a bank email
+            </button>
+            <button type="button" className="quiet" onClick={() => later("Email from a new sender")}>
+              Later
+            </button>
+          </div>
+          <span className="small muted">The lines it finds come back here one by one. The raw email can be downloaded from Settings › Inbox.</span>
+        </>
+      ) : (
+        <span className="small muted">An admin of the household can attach it to an account.</span>
       )}
     </section>
   );

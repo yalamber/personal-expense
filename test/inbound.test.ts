@@ -6,6 +6,8 @@ import {
   parseInboundAddress,
   rawMailKeys,
   safeFilename,
+  looksLikeForwarder,
+  senderCandidates,
   senderMatches,
   forwardingCheck,
 } from "../src/worker/lib/inbound";
@@ -95,5 +97,37 @@ describe("forwardingCheck", () => {
 
   it("ignores everyone else", () => {
     expect(forwardingCheck("alerts@bank.example", "(#572612094) Gmail Forwarding Confirmation")).toBeNull();
+  });
+});
+
+describe("senderCandidates", () => {
+  it("puts the From header before a forwarder's envelope sender", () => {
+    const headers = new Headers({ from: "Nabil Bank <txn-alert@nabilbank.com>" });
+    expect(senderCandidates("postmaster@mail-wr1-x436.google.com", headers)).toEqual(["txn-alert@nabilbank.com", "postmaster@mail-wr1-x436.google.com"]);
+  });
+  it("reads the original sender a forwarder kept in its own headers", () => {
+    const headers = new Headers({ from: "Me <me@gmail.com>", "x-original-sender": "alerts@nicasiabank.com" });
+    expect(senderCandidates("me@gmail.com", headers)).toEqual(["me@gmail.com", "alerts@nicasiabank.com"]);
+  });
+  it("finds the bank in the quoted block of a message forwarded by hand", () => {
+    const headers = new Headers({ from: "Me <me@gmail.com>" });
+    const body = "FYI\n\n---------- Forwarded message ---------\nFrom: Nabil Bank <txn-alert@nabilbank.com>\nDate: Sun, 26 Oct 2026 at 07:21\nSubject: Transaction Alert\n\nDear Customer...";
+    expect(senderCandidates("me@gmail.com", headers, body)).toEqual(["me@gmail.com", "txn-alert@nabilbank.com"]);
+  });
+  it("does not repeat an address or invent one", () => {
+    const headers = new Headers({ from: "alerts@bank.example" });
+    expect(senderCandidates("alerts@bank.example", headers, "From: nobody here")).toEqual(["alerts@bank.example"]);
+  });
+});
+
+describe("looksLikeForwarder", () => {
+  it("knows a mail system's envelope address from a sender's", () => {
+    expect(looksLikeForwarder("postmaster@mail-wr1-x436.google.com")).toBe(true);
+    expect(looksLikeForwarder("MAILER-DAEMON@example.com")).toBe(true);
+    expect(looksLikeForwarder("SRS0=abcd=XY=nabilbank.com=txn-alert@forwarder.example")).toBe(true);
+    expect(looksLikeForwarder("bounces+12345@mail.example")).toBe(true);
+    expect(looksLikeForwarder("txn-alert@nabilbank.com")).toBe(false);
+    expect(looksLikeForwarder("noreply@nicasiabank.com")).toBe(false);
+    expect(looksLikeForwarder("me@gmail.com")).toBe(false);
   });
 });

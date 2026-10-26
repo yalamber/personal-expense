@@ -350,6 +350,8 @@ export type Today = {
   bank: { accountId: string; name: string; type: AccountType; balanceMinor: number; lastLineDate: string | null; questions: number }[];
   bookMatchesThrough: string | null;
   decideCount: number;
+  /** Statement emails that did not become lines: from a new sender, or unreadable, failed or still queued. */
+  mail: { newSender: number; unread: number };
   nextGoal: (Goal & { outcome: { doneMonth: string | null; lateMonths: number | null } | null }) | null;
   comingUp: { id: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; state: RecurringState; daysUntil: number; accountId: string | null; transactionId: string | null }[];
 };
@@ -357,6 +359,7 @@ export type Today = {
 export type DecideCard =
   | { kind: "recurring"; key: string; recurringId: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; month: string; accountId: string | null; categoryId: string | null; note: string | null }
   | { kind: "forwarding"; key: string; statementId: string; code: string | null; link: string | null; requester: string | null; receivedAt: string }
+  | { kind: "inbox"; key: string; statementId: string; from: string; subject: string | null; receivedAt: string; note: string | null }
   | {
       kind: "twin";
       key: string;
@@ -493,8 +496,9 @@ export const api = {
   exportUrl: (id: string, from: string, to: string) => `${h(id)}/export.csv?from=${from}&to=${to}`,
 
   statements: (id: string) => request<Statement[]>("GET", `${h(id)}/statements`),
-  releaseStatement: (id: string, statementId: string, accountId: string | null) =>
-    request<{ ok: true }>("POST", `${h(id)}/statements/${statementId}/release`, { accountId }),
+  releaseStatement: (id: string, statementId: string, accountId: string | null, remember = true) =>
+    request<{ ok: true; remembered: boolean }>("POST", `${h(id)}/statements/${statementId}/release`, { accountId, remember }),
+  rawStatementUrl: (id: string, statementId: string) => `${h(id)}/statements/${statementId}/raw`,
 
   review: (id: string) => request<ReviewLine[]>("GET", `${h(id)}/review`),
   decide: (

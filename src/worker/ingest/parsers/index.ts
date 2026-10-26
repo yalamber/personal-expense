@@ -30,3 +30,7 @@ export function registerParser(parser: StatementParser): void {
 export function findParser(input: { from: string; subject: string }): StatementParser | undefined {
   return parsers.find((p) => p.matches(input));
 }
+
+// Bank-specific parsers register above this line; the generic alert reader claims what is left.
+import { alertParser } from "./alerts";
+registerParser(alertParser);

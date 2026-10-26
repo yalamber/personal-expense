@@ -54,7 +54,7 @@ export function Inbox({ household }: { household: Household }) {
       <div className="stack" style={{ gap: 4 }}>
         <h1>Inbox</h1>
         <div className="muted">
-          Forward bank emails to <span className="mono">{household.inboundAddress}</span>. They show up here within a minute.
+          Forward bank emails to <span className="mono">{household.inboundAddress}</span>. They show up here within a minute. Mail from a sender no account lists yet waits for an admin, here and in Decide; "no parser yet" means the email arrived but nothing in it read like a transaction. Download one and send it in, and a parser can be written for that bank.
         </div>
       </div>
 
@@ -101,7 +101,7 @@ export function Inbox({ household }: { household: Household }) {
                       {st.status === "quarantined" && isAdmin && accounts.length > 0 && (
                         <div className="row" style={{ marginTop: 6 }}>
                           <select aria-label="Attach to account" defaultValue="" onChange={(e) => e.target.value && release(st, e.target.value)}>
-                            <option value="">Attach and process…</option>
+                            <option value="">Attach, remember the sender, and read…</option>
                             {accounts.filter((a) => ["checking", "savings", "credit", "wallet"].includes(a.type) && !a.closedAt).map((a) => (
                               <option key={a.id} value={a.id}>
                                 {a.name}
@@ -126,6 +126,13 @@ export function Inbox({ household }: { household: Household }) {
                       <span className={`pill ${pill.tone}`}>{pill.label}</span>
                       {st.error && <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>{st.error}</div>}
                       {st.verifyCode?.code && <div className="mono" style={{ marginTop: 4, fontSize: 13 }}>code {st.verifyCode.code}</div>}
+                      {isAdmin && (
+                        <div style={{ marginTop: 4 }}>
+                          <a className="small" href={api.rawStatementUrl(household.id, st.id)} download>
+                            Download the email
+                          </a>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

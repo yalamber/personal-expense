@@ -387,6 +387,19 @@ export function Today({
                 )}
               </div>
             ))}
+            {(data.mail.newSender > 0 || data.mail.unread > 0) && (
+              <div className="kv">
+                <span className="stack" style={{ gap: 0 }}>
+                  {data.mail.newSender > 0
+                    ? `${data.mail.newSender} ${data.mail.newSender === 1 ? "email" : "emails"} from a new sender`
+                    : `${data.mail.unread} ${data.mail.unread === 1 ? "email" : "emails"} the app could not read`}
+                  <span className="small muted">{data.mail.newSender > 0 ? "Say which account it is about." : "The inbox says why."}</span>
+                </span>
+                <a href={`${base}/${data.mail.newSender > 0 ? "decide" : "settings/inbox"}`} onClick={onLinkClick} style={{ fontWeight: 600, color: "var(--marigold-deep)" }}>
+                  {data.mail.newSender > 0 ? "Decide" : "Inbox"}
+                </a>
+              </div>
+            )}
             <p className="small muted" style={{ margin: "8px 0 0" }}>
               Statements arrive by email and check themselves against the book. Only the odd ones ask for you.{" "}
               <a href={`/h/${household.id}/settings/forwarding`} onClick={onLinkClick}>

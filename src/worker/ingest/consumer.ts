@@ -9,7 +9,7 @@ import PostalMime from "postal-mime";
 import { getDb, schema } from "../db";
 import type { AppEnv, ParseJob } from "../env";
 import { nowIso } from "../lib/ids";
-import { isBlockedAttachment, rawMailKeys } from "../lib/inbound";
+import { isBlockedAttachment, looksLikeForwarder, rawMailKeys } from "../lib/inbound";
 import { parseCsv } from "../../shared/csv";
 import { applyMapping, isCsvMapping } from "../../shared/csv-mapping";
 import { findParser } from "./parsers";
@@ -61,8 +61,11 @@ export async function processStatementEmail(job: ParseJob, env: AppEnv): Promise
   }
 
   const subject = email.subject ?? row.subject ?? "";
-  const base = { subject, messageId: row.messageId ?? email.messageId ?? null, attachments: JSON.stringify(stored) };
-  const parser = findParser({ from: row.fromAddress, subject });
+  // Rows stored with a forwarder's envelope address take the real sender from the From header.
+  const headerFrom = email.from?.address?.trim().toLowerCase();
+  const fromAddress = headerFrom && looksLikeForwarder(row.fromAddress) && !looksLikeForwarder(headerFrom) ? headerFrom : row.fromAddress;
+  const base = { subject, messageId: row.messageId ?? email.messageId ?? null, attachments: JSON.stringify(stored), fromAddress };
+  const parser = findParser({ from: fromAddress, subject });
 
   // Without a bank-specific parser, a CSV attachment can still be read with the account's saved mapping.
   const csvAttachments = forParser.filter((a) => /\.csv$/i.test(a.filename) || /csv/i.test(a.mimeType));
@@ -108,6 +111,13 @@ export async function processStatementEmail(job: ParseJob, env: AppEnv): Promise
       );
     }
 
+    if (!lines.length) {
+      await db
+        .update(schema.statementEmails)
+        .set({ ...base, parserKey, status: "unparsed", error: "nothing in this email read like a transaction (an amount next to debited or credited, and a date)", processedAt: nowIso() })
+        .where(eq(schema.statementEmails.id, row.id));
+      return;
+    }
     await db.update(schema.statementEmails).set({ ...base, parserKey, error: null }).where(eq(schema.statementEmails.id, row.id));
     await ingestLines(db, { householdId: row.householdId, statementEmailId: row.id, accountId: row.accountId, source: "email" }, lines);
     await refreshStatementStatus(db, row.id, "parsed");

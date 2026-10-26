@@ -50,6 +50,34 @@ export function senderMatches(patterns: string | null | undefined, from: string)
     });
 }
 
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+/**
+ * Who really sent a message, in the order worth checking against the allowlist. Mail that reaches
+ * us through a forwarder arrives with the forwarder's envelope sender (Gmail rewrites it to a
+ * postmaster@…google.com address), so the From header comes first, then the headers forwarders
+ * use to keep the original sender, then the envelope. A message forwarded by hand carries the
+ * original "From:" in the quoted block at the top of the body, so that is read last.
+ */
+export function senderCandidates(envelopeFrom: string, headers: { get(name: string): string | null }, bodyText = ""): string[] {
+  const out: string[] = [];
+  const push = (value: string | null | undefined) => {
+    if (!value) return;
+    const addr = (extractEmail(value).match(EMAIL_RE)?.[0] ?? "").toLowerCase();
+    if (addr && !out.includes(addr)) out.push(addr);
+  };
+  for (const name of ["from", "x-original-sender", "x-original-from", "resent-from", "sender"]) push(headers.get(name));
+  push(envelopeFrom);
+  const quoted = bodyText.match(/^[\s>*]*(?:From|De|Von)\s*:\s*\*?\s*(.+)$/im)?.[1];
+  push(quoted);
+  return out;
+}
+
+/** A forwarder's or mail system's envelope address, never a sender worth remembering. */
+export function looksLikeForwarder(address: string): boolean {
+  return /^(?:postmaster@|mailer-daemon@|srs[01][=+]|prvs=|bounces?[-+@.]|msprvs|[^@]*\+caf_=)/i.test(address.trim());
+}
+
 /** Builds the address a household forwards statements to. */
 export function inboundAddressFor(localPart: string, token: string, domain: string): string {
   return `${localPart}+${token}@${domain}`;

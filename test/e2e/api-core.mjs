@@ -113,5 +113,61 @@ ok(fwd && fwd.code === "572612094" && fwd.link?.startsWith("https://mail-setting
 ok(cards[0].kind === "forwarding", "forwarding check is first");
 await call("POST", `${H}/statements/${fwd.statementId}/dismiss`, null, 200);
 
+// --- Statement emails: matched on the From header (not a forwarder's envelope), read by the alert parser ---
+const inboundTo = encodeURIComponent(`stmt+${token}@statements.leadbase.stream`);
+const mail = (from, subject, body, extraHeaders = []) =>
+  [`From: ${from}`, `To: stmt+${token}@statements.leadbase.stream`, `Subject: ${subject}`, `Date: ${new Date().toUTCString()}`, `Message-ID: <${Math.random().toString(36).slice(2)}@e2e.example>`, ...extraHeaders, "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "", body].join("\r\n");
+const deliver = async (envelopeFrom, eml) => {
+  const r = await fetch(`${BASE}/cdn-cgi/handler/email?from=${encodeURIComponent(envelopeFrom)}&to=${inboundTo}`, { method: "POST", body: eml });
+  if (r.status >= 300) throw new Error(`email handler answered ${r.status}`);
+  await sleep(1500);
+  return (await call("GET", `${H}/statements`, null, 200)).data[0];
+};
+const nabil = (await call("POST", `${H}/accounts`, { name: "Nabil savings", type: "savings", balance: "50,000", statementSenderPattern: "txn-alert@nabilbank.com" }, 201)).data.id;
+
+// Gmail forwards with its own envelope sender; the bank is in the From header.
+let st = await deliver("postmaster@mail-wr1-x436.google.com", mail("Nabil Bank <txn-alert@nabilbank.com>", "Transaction Alert", "Dear Customer,\r\n\r\nYour account 01010XXXXXX89 has been debited by NPR 1,500.00 on 26/10/2026 14:03:11.\r\nRemarks: ESEWA LOAD 9841XXXXXX\r\nAvailable Balance: NPR 1,23,456.78\r\n\r\nThank you."));
+ok(st.fromAddress === "txn-alert@nabilbank.com" && st.accountId === nabil && st.status !== "quarantined", `a forwarded alert is matched on its From header (${st.status})`);
+ok(st.parserKey === "alert-text" && st.status === "review", "the alert parser read it and the line waits for a person");
+let review = (await call("GET", `${H}/review`, null, 200)).data;
+ok(review.some((l) => Math.abs(l.amountMinor) === 150000 && /ESEWA LOAD/.test(l.description ?? "")), "the review queue has NPR 1,500 to ESEWA LOAD");
+cards = (await call("GET", `${H}/decide`, null, 200)).data;
+ok(cards.some((c) => c.kind === "category" && /ESEWA/i.test(c.description)), "Decide asks for its category");
+
+// Forwarded by hand: the bank is only in the quoted block.
+st = await deliver("me@gmail.com", mail("Me <me@gmail.com>", "Fwd: Credit Alert", "FYI\r\n\r\n---------- Forwarded message ---------\r\nFrom: Nabil Bank <txn-alert@nabilbank.com>\r\nDate: Wed, 7 Oct 2026 at 10:02\r\nSubject: Credit Alert\r\n\r\nDear Customer, Rs. 90,000.00 has been credited to your A/C XXXX1234 on 07-10-2026. Particulars: SALARY OCT. Available balance Rs. 2,10,000.00"));
+ok(st.fromAddress === "txn-alert@nabilbank.com" && st.status === "review", "an alert forwarded by hand is matched through its quoted From line");
+review = (await call("GET", `${H}/review`, null, 200)).data;
+ok(review.some((l) => Math.abs(l.amountMinor) === 9000000 && /SALARY OCT/.test(l.description ?? "")), "and its credit of Rs 90,000 waits for a person");
+
+// A sender no account lists: Decide asks which account, and remembers the answer.
+st = await deliver("alerts@newbank.example", mail("New Bank <alerts@newbank.example>", "Debit Alert", "Your account has been debited by NPR 800.00 on 2026-10-20. Remarks: COFFEE"));
+ok(st.status === "quarantined" && /alerts@newbank.example is not on any account/.test(st.error), "mail from a new sender waits");
+let t2 = (await call("GET", `${H}/today`, null, 200)).data;
+ok(t2.mail.newSender === 1, "Today counts it");
+cards = (await call("GET", `${H}/decide`, null, 200)).data;
+const inboxCard = cards.find((c) => c.kind === "inbox");
+ok(inboxCard && inboxCard.from === "alerts@newbank.example" && inboxCard.statementId === st.id, "Decide shows the new-sender card first");
+const raw = await fetch(`${BASE}${H}/statements/${st.id}/raw`, { headers: { cookie: state.cookie } });
+ok(raw.status === 200 && /message\/rfc822/.test(raw.headers.get("content-type")) && /Debit Alert/.test(await raw.text()), "the raw email can be downloaded");
+const rel = (await call("POST", `${H}/statements/${st.id}/release`, { accountId: nabil, remember: true }, 200)).data;
+ok(rel.remembered === true, "attaching it remembers the sender");
+await sleep(1500);
+const acct = (await call("GET", `${H}/accounts`, null, 200)).data.find((a) => a.id === nabil);
+ok(/alerts@newbank\.example/.test(acct.statementSenderPattern ?? ""), "the account's sender list grew");
+st = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id === st.id);
+ok(st.status === "review" && st.accountId === nabil, "and the email was read for that account");
+st = await deliver("alerts@newbank.example", mail("New Bank <alerts@newbank.example>", "Debit Alert", "Your account has been debited by NPR 300.00 on 2026-10-21. Remarks: TEA"));
+ok(st.status === "review", "the next one from that sender goes straight through");
+st = await deliver("promo@shop.example", mail("Shop <promo@shop.example>", "Big sale this weekend", "Everything half price."));
+ok(st.status === "quarantined", "a shop's newsletter waits too");
+await call("POST", `${H}/statements/${st.id}/dismiss`, {}, 200);
+st = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id === st.id);
+ok(st.status === "done" && /not a statement/.test(st.error), "and can be set aside as not a statement");
+t2 = (await call("GET", `${H}/today`, null, 200)).data;
+ok(t2.mail.newSender === 0, "nothing from a new sender is left");
+st = await deliver("postmaster@mail-x.google.com", mail("Nabil Bank <txn-alert@nabilbank.com>", "Transaction Alert", "Your one time password is 482913. Do not share it."));
+ok(st.status === "unparsed" && /nothing in this email read like a transaction/.test(st.error), "an email with no transaction in it says so instead of failing");
+
 console.log(`\nAll good. Household ${hh}`);
 console.log(JSON.stringify({ hh, cookie: state.cookie }));
