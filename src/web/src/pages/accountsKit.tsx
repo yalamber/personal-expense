@@ -5,6 +5,9 @@
 import { useState } from "react";
 import { addDays, todayIn } from "../../../shared/dates";
 import { rateLabel } from "../../../shared/deposit";
+import { parseAmountToMinor } from "../../../shared/money";
+import { rateText } from "../../../shared/terms";
+import { TermsEditor, termsBody, termsFrom, type TermsValue } from "./termsKit";
 import { minorDigits } from "../../../shared/money";
 import { monthName } from "../../../shared/plan";
 import { api, ApiError, isQueued, QUEUED_NOTE, type Account, type AccountBody, type AccountType, type DepositPayout, type Goal, type Household } from "../api";
@@ -47,7 +50,10 @@ export function accountLine(a: Account, cur: string): string {
     }
     return `${rate}${a.endDate ? ` · repay by ${shortDate(a.endDate)} ${a.endDate.slice(0, 4)}` : " · no fixed installment"}`;
   }
-  if (a.type === "lent") return a.endDate ? `Expected back by ${shortDate(a.endDate)} ${a.endDate.slice(0, 4)}` : "No date agreed";
+  if (a.type === "lent") {
+    const rate = (a.rateBp ?? 0) > 0 ? `${rateText(a.rateBp, a.ratePer)}${a.terms?.interestMinor ? ` · ${about(Math.abs(a.terms.interestMinor))} interest so far` : ""}` : "no interest";
+    return `${a.endDate ? `Expected back by ${shortDate(a.endDate)} ${a.endDate.slice(0, 4)}` : "No date agreed"} · ${rate}`;
+  }
   if (a.openingBalanceDate) {
     const from = addDays(a.openingBalanceDate, 1);
     return `Counting from ${shortDate(from)} ${from.slice(0, 4)}${a.institution ? ` · ${a.institution}` : ""}`;
@@ -100,6 +106,7 @@ export function AccountForm({
   const [day, setDay] = useState(a?.installmentDay ?? Math.min(28, Number(today.slice(8, 10))));
   const [goalId, setGoalId] = useState(a?.goalId ?? "");
   const [sender, setSender] = useState(a?.statementSenderPattern ?? "");
+  const [terms, setTerms] = useState<TermsValue>(termsFrom(a));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,7 +133,7 @@ export function AccountForm({
       else if (months.trim() && Number(months) > 0) Object.assign(body, { termMonths: Number(months), installmentDay: day });
       if (principal.trim()) body.principal = principal;
     }
-    if (type === "lent") body.endDate = endDate || null;
+    if (type === "lent") Object.assign(body, termsBody(terms));
     setBusy(true);
     try {
       if (a) await api.updateAccount(household.id, a.id, body);
@@ -271,10 +278,7 @@ export function AccountForm({
       )}
 
       {type === "lent" && (
-        <label style={{ maxWidth: 260 }}>
-          Expected back by (optional)
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        </label>
+        <TermsEditor value={terms} onChange={setTerms} side="owed" currency={cur} amountMinor={parseAmountToMinor(balance, cur) ?? a?.balanceMinor ?? 0} today={today} />
       )}
 
       <div className="row" style={{ alignItems: "flex-end" }}>

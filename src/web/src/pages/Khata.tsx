@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { todayIn } from "../../../shared/dates";
+import { minorDigits } from "../../../shared/money";
+import { rateText } from "../../../shared/terms";
 import { monthName } from "../../../shared/plan";
 import { api, ApiError, isQueued, paths, QUEUED_NOTE, type Account, type Category, type ContactEntry, type ContactEntryBody, type ContactLedger, type Household } from "../api";
 import { useQuery } from "../query";
@@ -8,6 +10,7 @@ import { navigate, onLinkClick } from "../router";
 import { CategorySelect, Icon, Sheet, amountInput, categoryLabel, formatMoney, shortDate } from "../ui";
 import { Pending } from "./Pending";
 import { Diverging, Lines, SERIES } from "../charts";
+import { TermsEditor, TermsSummary, dueLine, termsBody, termsFrom, type TermsValue } from "./termsKit";
 
 /**
  * Khata: the family's tabs with shops, relatives and friends. Each contact has a page like the
@@ -50,6 +53,7 @@ export function Khata({ household, version, onChanged }: { household: Household;
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
   const [showSettled, setShowSettled] = useState(false);
+  const today = todayIn(household.timezone);
 
   if (error && !rows) return <div className="error">{error}</div>;
   if (!rows) return <PageSkeleton kind="khata" />;
@@ -99,6 +103,12 @@ export function Khata({ household, version, onChanged }: { household: Household;
           <span className="what">
             <strong>{a.name}</strong>
             <span>{lastLine(a)}</span>
+            {(() => {
+              const due = dueLine(a, side, today);
+              const rate = (a.rateBp ?? 0) > 0 ? rateText(a.rateBp, a.ratePer) : null;
+              if (!due && !rate) return null;
+              return <span className={`due ${due?.late ? "late" : ""}`}>{[due?.text, rate].filter(Boolean).join(" · ")}</span>;
+            })()}
           </span>
           <span className="amount">
             <span style={{ color: tone(side) }}>{side === "settled" ? "—" : formatMoney(Math.abs(a.balanceMinor), cur, { symbol: false })}</span>
@@ -232,6 +242,7 @@ export function KhataPage({ household, contactId, categories, version, onChanged
   const [showAll, setShowAll] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busyInterest, setBusyInterest] = useState(false);
 
   if (lq.error && !ledger) return <div className="error">{lq.error}</div>;
   if (!ledger || !contact) return <PageSkeleton kind="khata" />;
@@ -262,6 +273,34 @@ export function KhataPage({ household, contactId, categories, version, onChanged
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not remove it");
+    }
+  }
+
+  async function addInterest() {
+    const t = contact!.terms!;
+    const interest = Math.abs(t.interestMinor);
+    const weOweIt = t.interestMinor < 0;
+    const today = todayIn(household.timezone);
+    // Interest we owe is an expense (Fees › Interest); interest owed to us is income.
+    const cat = categories.find((c) => /^interest$/i.test(c.name) && c.kind !== "income") ?? null;
+    const incomeCat = categories.find((c) => /interest/i.test(c.name) && c.kind === "income") ?? null;
+    setBusyInterest(true);
+    setError(null);
+    try {
+      await api.addEntry(household.id, contact!.id, {
+        kind: weOweIt ? "credit" : "charge",
+        amount: amountInput(interest, cur),
+        date: today,
+        categoryId: (weOweIt ? cat : incomeCat)?.id ?? null,
+        description: `Interest to ${shortDate(today)}`,
+      });
+      await api.updateAccount(household.id, contact!.id, { startDate: today });
+      setNotice(`${formatMoney(interest, cur)} interest added to ${contact!.name}'s khata. From today, interest counts on the new total.`);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not add the interest");
+    } finally {
+      setBusyInterest(false);
     }
   }
 
@@ -334,6 +373,34 @@ export function KhataPage({ household, contactId, categories, version, onChanged
           </div>
         </dl>
       </section>
+      {(contact.terms || side !== "settled") && (
+        <section className="card stack" aria-labelledby="terms-h" style={{ maxWidth: 760 }}>
+          <div className="row between">
+            <h2 id="terms-h">Terms</h2>
+            {canWrite && (
+              <button type="button" className="link small" onClick={() => setSheet("edit")}>
+                {contact.terms ? "Change" : "Add a date and interest"}
+              </button>
+            )}
+          </div>
+          {contact.terms ? (
+            <TermsSummary account={contact} side={side} currency={cur} today={todayIn(household.timezone)} />
+          ) : (
+            <span className="small muted">
+              No date or interest yet. Say when {side === "owe" ? "you mean to pay it back" : "you expect it back"}, and whether there is interest, and Decide reminds you a week before.
+            </span>
+          )}
+          {canWrite && contact.terms && Math.abs(contact.terms.interestMinor) >= 10 ** minorDigits(cur) && side !== "settled" && (
+            <div className="row" style={{ gap: 8 }}>
+              <button type="button" className="secondary" disabled={busyInterest} onClick={addInterest}>
+                Add {formatMoney(Math.abs(contact.terms.interestMinor), cur)} interest to the khata
+              </button>
+              <span className="small muted">It joins what is owed; interest then counts afresh from today.</span>
+            </div>
+          )}
+        </section>
+      )}
+
       {counted.length >= 2 && (
         <section className="card stack" aria-labelledby="moved-h" style={{ maxWidth: 760 }}>
           <div className="row between">
@@ -583,6 +650,13 @@ function ContactSheet({ household, initial, onClose, onSaved }: { household: Hou
   const [balance, setBalance] = useState(initial?.openingBalanceMinor ? amountInput(Math.abs(initial.openingBalanceMinor), cur) : "");
   const [weOwe, setWeOwe] = useState(initial ? (initial.openingBalanceMinor ?? 0) < 0 : true);
   const [touched, setTouched] = useState(false);
+  const [terms, setTerms] = useState<TermsValue>(termsFrom(initial));
+  const [termsOpen, setTermsOpen] = useState(Boolean(initial?.endDate || (initial?.rateBp ?? 0) > 0));
+  const today = todayIn(household.timezone);
+  const typed = Number(balance.replace(/[^\d.]/g, "")) || 0;
+  // Which way the money runs decides the wording: what we pay back, or what we expect back.
+  const side: "owe" | "owed" | "settled" = initial && !touched ? (initial.balanceMinor < 0 ? "owe" : initial.balanceMinor > 0 ? "owed" : weOwe ? "owe" : "owed") : weOwe ? "owe" : "owed";
+  const amountForExample = initial && !touched ? Math.abs(initial.balanceMinor) : Math.round(typed * 100);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -593,7 +667,7 @@ function ContactSheet({ household, initial, onClose, onSaved }: { household: Hou
     try {
       // Only a real amount sets a brought-forward figure; without one, every entry counts, back-dated ones too.
       const starting = initial ? touched : Boolean(balance.trim()) && balance.trim() !== "0";
-      const body = { name: name.trim(), phone, note, ...(starting ? { balance: balance.trim() || "0", weOwe, balanceDate: todayIn(household.timezone) } : {}) };
+      const body = { name: name.trim(), phone, note, ...(starting ? { balance: balance.trim() || "0", weOwe, balanceDate: todayIn(household.timezone) } : {}), ...(termsOpen ? termsBody(terms) : initial ? { endDate: null, rate: "0", startDate: null } : {}) };
       if (initial) {
         await api.updateAccount(household.id, initial.id, body);
         onSaved(initial.id);
@@ -653,6 +727,15 @@ function ContactSheet({ household, initial, onClose, onSaved }: { household: Hou
           <span className="small muted">
             {initial ? "Changing this resets the brought-forward figure to today; entries already in the book stay." : "The figure the book starts from. Entries you add after count on top of it."}
           </span>
+        </div>
+        <div className="stack" style={{ gap: 8, borderTop: "1px dashed var(--line)", paddingTop: 12 }}>
+          <label className="check">
+            <input type="checkbox" checked={termsOpen} onChange={(e) => setTermsOpen(e.target.checked)} />
+            <span>
+              <strong>Terms:</strong> a date to {side === "owe" ? "pay it back" : "get it back"}, and interest if any
+            </span>
+          </label>
+          {termsOpen && <TermsEditor value={terms} onChange={setTerms} side={side} currency={cur} amountMinor={amountForExample} today={today} />}
         </div>
         {error && (
           <div className="error" role="alert">

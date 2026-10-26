@@ -96,6 +96,10 @@ export type Account = {
   closedAt: string | null;
   phone: string | null;
   note: string | null;
+  /** How the rate was given; rateBp is always yearly. */
+  ratePer: "year" | "month" | null;
+  /** Contacts and money lent: the settle-by date and interest so far (null without terms). */
+  terms: AccountTerms | null;
   /** Contacts: what happened last in their khata. */
   lastEntry: { date: string; description: string | null; direction: "in" | "out" | "transfer"; amountMinor: number; transferPairId: string | null } | null;
   /** Today, from the starting balance; negative for what is owed. */
@@ -113,6 +117,16 @@ export type Account = {
   } | null;
 };
 
+export type AccountTerms = {
+  rateBp: number;
+  ratePer: "year" | "month" | null;
+  from: string | null;
+  settleBy: string | null;
+  /** Interest to today: positive they owe us, negative we owe. */
+  interestMinor: number;
+  interestBySettleMinor: number | null;
+};
+
 export type AccountBody = Partial<{
   name: string;
   type: AccountType;
@@ -124,7 +138,8 @@ export type AccountBody = Partial<{
   goalId: string | null;
   principal: string;
   rate: string;
-  startDate: string;
+  ratePer: "year" | "month";
+  startDate: string | null;
   endDate: string | null;
   termMonths: number;
   payout: DepositPayout;
@@ -350,13 +365,9 @@ export type Today = {
   payday: string;
   daysLeft: number;
   incomeMinor: number;
-  incomeExpected: boolean;
-  /** The part of the income still to come, when expected. */
-  expectedPartMinor: number;
-  incomeSource: "logged" | "recurring" | "usual" | "none";
-  /** Months behind the usual figure (2 or more means the book's own average). */
-  usualMonths: number;
-  mode: "nothing" | "unplanned" | "expected" | "over" | "ok";
+  /** Income listed under Every month and not yet in the book: shown, never counted. */
+  expectedLaterMinor: number;
+  mode: "nothing" | "waiting" | "unplanned" | "over" | "ok";
   spentMinor: number;
   goalsMinor: number;
   plannedMinor: number;
@@ -380,6 +391,7 @@ export type Today = {
 };
 
 export type DecideCard =
+  | { kind: "settle"; key: string; accountId: string; name: string; type: "person" | "lent"; balanceMinor: number; interestMinor: number; rateBp: number; ratePer: "year" | "month" | null; settleBy: string; days: number }
   | { kind: "recurring"; key: string; recurringId: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; month: string; accountId: string | null; categoryId: string | null; note: string | null }
   | { kind: "forwarding"; key: string; statementId: string; code: string | null; link: string | null; requester: string | null; receivedAt: string }
   | { kind: "inbox"; key: string; statementId: string; from: string; subject: string | null; receivedAt: string; note: string | null }

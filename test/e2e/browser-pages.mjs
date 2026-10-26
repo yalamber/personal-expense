@@ -3,7 +3,7 @@
 import { BASE, SKIP, cookieFor, launch, ok, suiteArgs } from "./lib.mjs";
 
 const { json, out } = suiteArgs();
-const [{ hh, cookie }, every] = json;
+const [{ hh, cookie, hari }, every] = json;
 const shot = (page, name, opts) => (out ? page.screenshot({ path: `${out}/${name}.png`, ...opts }) : Promise.resolve());
 const browser = await launch();
 if (!browser) {
@@ -112,6 +112,53 @@ const cookies = cookieFor(cookie);
   await page.goto(`${BASE}/h/${hh}/decide`, { waitUntil: "networkidle" });
   ok((await page.locator("h1").first().innerText()) === "Decide", "Decide opens for the seeded household");
   await ctx.close();
+}
+
+// Terms in the khata: the list says when, the contact's page shows the interest, Decide reminds.
+if (hari) {
+  for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["phone", { width: 390, height: 844 }]]) {
+    const ctx = await browser.newContext({ viewport, deviceScaleFactor: label === "phone" ? 2 : 1 });
+    await ctx.addCookies(cookies);
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => errors.push(`terms ${label}: ${e.message}`));
+    await page.goto(`${BASE}/h/${hh}/khata`, { waitUntil: "networkidle" });
+    const row = page.locator("a.khata-row").filter({ hasText: "Hari dai" });
+    const due = await row.locator(".due").innerText();
+    ok(/pay back by .*in 5 days/.test(due) && /1\.5% a month/.test(due), `${label}: the khata list says when and at what rate (${due})`);
+    await shot(page, `khata-terms-${label}`, { fullPage: true });
+    await row.click();
+    await page.locator("dl.terms").waitFor({ timeout: 10000 });
+    const terms = (await page.locator("section[aria-labelledby='terms-h']").innerText()).replace(/\s+/g, " ");
+    ok(/Pay back by/.test(terms) && /1\.5% a month/.test(terms) && /Interest so far/.test(terms) && /To settle on/.test(terms), `${label}: the contact's page shows the terms and the interest`);
+    ok((await page.getByRole("button", { name: /interest to the khata/ }).count()) === 1, `${label}: with a way to add the interest to the khata`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    ok(overflow <= 0, `${label}: nothing runs off the side`);
+    await shot(page, `khata-contact-terms-${label}`, { fullPage: true });
+    if (label === "phone") {
+      await page.getByRole("button", { name: "Edit" }).click();
+      await page.locator(".terms-editor").waitFor({ timeout: 5000 });
+      ok((await page.locator(".terms-editor input[type=date]").first().inputValue()).length === 10, "phone: the edit sheet opens with the terms filled in");
+      await shot(page, "khata-edit-terms-phone");
+      await page.keyboard.press("Escape");
+      await page.goto(`${BASE}/h/${hh}/decide`, { waitUntil: "networkidle" });
+      let found = false;
+      for (let i = 0; i < 8 && !found; i++) {
+        const card = page.locator(".decide-card").first();
+        if ((await card.getAttribute("aria-label")) === "Money to settle") {
+          found = true;
+          const text = await card.innerText();
+          ok(/Pay Hari dai back/.test(text) && /interest/.test(text), "phone: Decide asks to pay Hari dai back, with the interest");
+          await shot(page, "decide-settle-phone", { fullPage: true });
+          break;
+        }
+        const skip = card.getByRole("button", { name: /^(Later|Not yet|Leave it for later)$/ });
+        if (!(await skip.count())) break;
+        await skip.first().click();
+      }
+      ok(found, "phone: the settle card is among the decisions");
+    }
+    await ctx.close();
+  }
 }
 
 // Decide asks about a bill past its day; one tap logs it, and Today then shows it in the book.

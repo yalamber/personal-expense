@@ -55,6 +55,15 @@ credit, they owe us for something), each with the balance after it: "we owe 8,20
 "got it back". Buying on credit is that month's spending and a charge is that month's income;
 settling up later is a move. In Log, a contact appears under "On credit from" and in Move or save.
 
+**Terms** on a contact or on money lent (`src/shared/terms.ts`): a date the family means to pay it
+back by (or expects it back by), and either no interest (family and friends) or simple interest at
+a rate given a month (2% a month, the usual way between people) or a year, counted from the day
+the money moved or a date given. The khata list shows "pay back by 31 Oct, in 5 days · 1.5% a
+month"; a contact's page shows the interest so far and what settles it on the date, with "Add the
+interest to the khata" (the count then starts again from that day). A week before the date, or
+once it has passed, Decide asks: pay it (with the interest, from an account), say it came back,
+or move the date. Interest is in whole rupees; rates are stored yearly with how they were given.
+
 **Goal payments.** A baina or advance to the land's seller, or a stage paid to the builder, is
 recorded on the goal as "Paid toward it": it counts toward the goal but is not money the family
 holds. It can come from an account, out of money already saved for the goal, or from before the
@@ -73,12 +82,13 @@ is linked on its own. Entries carry the item they stand for, so removing one ope
 again. Loan installments stay with the loan in Accounts; envelopes watch a category's spending.
 
 **The headline explains itself.** The month's arithmetic lives in `src/shared/month.ts`: income
-(what came in; if nothing yet, the every-month income still to come, or failing that the usual
-month), less spending, less what is set aside for goals, loan installments and bills, over the
-days to payday. Today opens "How is this worked out?" under the headline with those lines, and
-the headline says which case it is in: plain, "once the expected … is in", "if the usual … comes in
-and nothing is set aside" (with a nudge to add bills and give the goals a monthly amount), or past
-the plan. Entries the family logged can be corrected in the book (amount, date and name); the
+already in the book this month, less spending, less what is set aside for goals, loan
+installments and bills, over the days to payday. Income only counts once it is in: the salary
+listed under Every month is shown as "expected, counts once it is in the book", and the usual month
+from the starting point is for the Plan only. Today opens "How is this worked out?" under the
+headline with those lines, and the headline says which case it is in: plain, nothing in yet,
+nothing set aside (with a nudge to add bills and give the goals a monthly amount), or past what
+came in. Entries the family logged can be corrected in the book (amount, date and name); the
 bank's figures stay as the bank wrote them.
 
 **Charts** (`src/web/src/charts.tsx`, plain SVG and HTML, no library): Today draws the month's

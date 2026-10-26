@@ -69,4 +69,7 @@ await call("POST", `${H}/recurring`, { name: "Rent", direction: "out", amount: "
 await call("POST", `${H}/recurring`, { name: "Salary", direction: "in", amount: "90000", dayOfMonth: 7, categoryId: salaryCat, accountId: salary }, 201);
 await call("POST", `${H}/recurring`, { name: "Internet", direction: "out", amount: "1500", dayOfMonth: 28, categoryId: utilities, accountId: salary }, 201);
 
-console.log(JSON.stringify({ hh, cookie: state.cookie, ram }));
+// Terms on Hari dai's loan: 1.5% a month since he lent it, to be paid back in five days.
+await call("PATCH", `${H}/accounts/${hari}`, { endDate: addDays(today, 5), rate: "1.5", ratePer: "month", startDate: addDays(today, -40) }, 200);
+
+console.log(JSON.stringify({ hh, cookie: state.cookie, ram, hari }));

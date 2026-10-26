@@ -12,6 +12,8 @@ import { minorDigits } from "../../../shared/money";
 import { monthMath } from "../../../shared/month";
 import { expectedInMinor, isOpen, reserveMinor } from "../../../shared/recurring";
 import { loadRecurring, type RecurringRow } from "../../ledger/recurring";
+import { loadTerms } from "../../ledger/terms";
+import { settleStatus } from "../../../shared/terms";
 import { normalizeMerchant } from "../../../shared/merchant";
 import { simulatePlan, type PlanGoal } from "../../../shared/plan";
 import { schema, type Db } from "../../db";
@@ -55,6 +57,21 @@ function tidyDown(minor: number, currency: string): number {
 export type DecideCard =
   | { kind: "forwarding"; key: string; statementId: string; code: string | null; link: string | null; requester: string | null; receivedAt: string }
   | { kind: "inbox"; key: string; statementId: string; from: string; subject: string | null; receivedAt: string; note: string | null }
+  | {
+      kind: "settle";
+      key: string;
+      accountId: string;
+      name: string;
+      type: "person" | "lent";
+      /** Positive they owe us, negative we owe. */
+      balanceMinor: number;
+      /** Interest to today, same sign. */
+      interestMinor: number;
+      rateBp: number;
+      ratePer: "year" | "month" | null;
+      settleBy: string;
+      days: number;
+    }
   | {
       kind: "twin";
       key: string;
@@ -319,6 +336,33 @@ function recurringCards(rows: RecurringRow[], month: string): DecideCard[] {
     .map((r) => ({ kind: "recurring" as const, key: `recurring:${r.id}:${month}`, recurringId: r.id, name: r.name, direction: r.direction, amountMinor: r.amountMinor, due: r.status.due, month, accountId: r.accountId, categoryId: r.categoryId, note: r.note }));
 }
 
+/** Money between people with a settle-by date a week away or past: pay it, collect it, or move the date. */
+async function settleCards(db: Db, accounts: AccountView[], today: string, currency: string): Promise<DecideCard[]> {
+  const open = accounts.filter((a) => !a.closedAt && (a.type === "person" || a.type === "lent") && a.endDate && a.balanceMinor !== 0);
+  if (!open.length) return [];
+  const terms = await loadTerms(db, open, today, currency);
+  const cards: DecideCard[] = [];
+  for (const a of open) {
+    const s = settleStatus(a.endDate, today);
+    if (!s || (!s.late && !s.soon)) continue;
+    const t = terms.get(a.id);
+    cards.push({
+      kind: "settle",
+      key: `settle:${a.id}:${a.endDate}`,
+      accountId: a.id,
+      name: a.name,
+      type: a.type as "person" | "lent",
+      balanceMinor: a.balanceMinor,
+      interestMinor: t?.interestMinor ?? 0,
+      rateBp: a.rateBp ?? 0,
+      ratePer: (a.ratePer as "year" | "month" | null) ?? null,
+      settleBy: a.endDate!,
+      days: s.days,
+    });
+  }
+  return cards.sort((x, y) => (x.kind === "settle" && y.kind === "settle" ? x.days - y.days : 0));
+}
+
 export async function loadDecideCards(c: AppContext, recurring?: RecurringRow[]): Promise<DecideCard[]> {
   const db = c.get("db");
   const household = c.get("household");
@@ -326,18 +370,19 @@ export async function loadDecideCards(c: AppContext, recurring?: RecurringRow[])
   const today = todayIn(household.timezone);
   const month = today.slice(0, 7);
   const accounts = await loadAccountViews(db, household.id, today);
-  const [fwd, inbox, lines, balances, plan, every] = await Promise.all([
+  const [fwd, inbox, lines, balances, plan, every, settle] = await Promise.all([
     forwardingCards(db, household.id),
     inboxCards(db, household.id),
     lineCards(db, household.id, memberId),
     balanceCards(db, household.id, memberId),
     planCards(db, household, accounts),
     recurring ?? loadRecurring(db, household.id, month, today),
+    settleCards(db, accounts, today, household.currency),
   ]);
   const twins = lines.filter((x) => x.kind === "twin");
   const categories = lines.filter((x) => x.kind === "category");
   // Forwarding checks and deadlines first, then anything that could count money twice, then the month's bills.
-  return [...fwd, ...inbox, ...deadlineCards(accounts, today), ...twins, ...balances, ...recurringCards(every, month), ...plan, ...categories];
+  return [...fwd, ...inbox, ...deadlineCards(accounts, today), ...settle, ...twins, ...balances, ...recurringCards(every, month), ...plan, ...categories];
 }
 
 homeRoutes.get("/decide", async (c) => c.json(await loadDecideCards(c)));
@@ -368,7 +413,7 @@ homeRoutes.get("/today", async (c) => {
   const { from, to } = monthRange(month);
 
   const recurring = await loadRecurring(db, household.id, month, today);
-  const [categories, txs, budgets, goals, basis, moved, cards, mailCounts, lastLines] = await Promise.all([
+  const [categories, txs, budgets, goals, moved, cards, mailCounts, lastLines] = await Promise.all([
     db.query.categories.findMany({ where: eq(schema.categories.householdId, household.id) }),
     db
       .select({ amountMinor: schema.transactions.amountMinor, direction: schema.transactions.direction, categoryId: schema.transactions.categoryId, transferPairId: schema.transactions.transferPairId })
@@ -376,7 +421,6 @@ homeRoutes.get("/today", async (c) => {
       .where(and(eq(schema.transactions.householdId, household.id), between(schema.transactions.date, from, to), isNull(schema.transactions.voidedAt), onEverydayAccounts())),
     db.query.budgets.findMany({ where: and(eq(schema.budgets.householdId, household.id), eq(schema.budgets.month, month)) }),
     loadGoals(db, household.id, today),
-    monthlyBasis(db, household.id, month),
     db
       .select({ total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
       .from(schema.goalContributions)
@@ -422,7 +466,6 @@ homeRoutes.get("/today", async (c) => {
   const math = monthMath({
     loggedInMinor: s.income,
     expectedInMinor: expectedInMinor(rows),
-    usual: { source: basis.source, incomeMinor: basis.incomeMinor },
     spentMinor: s.spent,
     goalsMinor,
     loansMinor,
@@ -430,7 +473,7 @@ homeRoutes.get("/today", async (c) => {
     daysLeft,
     minorDigits: minorDigits(household.currency),
   });
-  const { incomeMinor, incomeExpected, everydayLeftMinor } = math;
+  const { incomeMinor, everydayLeftMinor } = math;
 
   // Envelopes: this month's budgets against spending in their top-level category.
   const tops = new Map(categories.filter((x) => !x.parentId).map((x) => [x.id, x]));
@@ -465,10 +508,8 @@ homeRoutes.get("/today", async (c) => {
     payday,
     daysLeft,
     incomeMinor,
-    incomeExpected,
-    expectedPartMinor: math.expectedPartMinor,
-    incomeSource: math.incomeSource,
-    usualMonths: basis.months,
+    // Income listed under Every month and not yet in the book: shown, never counted.
+    expectedLaterMinor: math.expectedLaterMinor,
     mode: math.mode,
     spentMinor: s.spent,
     goalsMinor,

@@ -133,6 +133,11 @@ export const accounts = sqliteTable(
      */
     principalMinor: integer("principal_minor"),
     rateBp: integer("rate_bp"),
+    /**
+     * How the rate was given: "year" (8.5% a year) or "month" (2% a month, the usual way between
+     * people). rate_bp is always yearly; this only decides how it is shown and edited.
+     */
+    ratePer: text("rate_per", { enum: ["year", "month"] }),
     startDate: text("start_date"),
     endDate: text("end_date"),
     /** Deposits: maturity = interest stays in and compounds quarterly; quarterly/monthly = paid out. */
@@ -142,6 +147,10 @@ export const accounts = sqliteTable(
     /** Loans: the monthly installment (EMI) and the day of the month it is due. */
     installmentMinor: integer("installment_minor"),
     installmentDay: integer("installment_day"),
+    /**
+     * Contacts and money lent use start_date as "interest counted from" and end_date as the date
+     * the family means to settle by (pay back, or expects it back).
+     */
     /** Contacts: a phone number and a few words about them. */
     phone: text("phone"),
     note: text("note"),

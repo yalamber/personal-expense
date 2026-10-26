@@ -2141,3 +2141,29 @@ button.mail-row[aria-expanded="true"] {
 .mail-open .mail-text {
   background: var(--sheet);
 }
+
+/* ---- Repayment terms (khata, money lent) ------------------------------------ */
+
+dl.terms {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+dl.terms dt {
+  color: var(--muted);
+  font-size: 13px;
+  padding-top: 1px;
+}
+dl.terms dd {
+  margin: 0;
+  min-width: 0;
+}
+.khata-row .due {
+  font-size: 12.5px;
+  color: var(--marigold-deep);
+}
+.khata-row .due.late {
+  color: var(--rust);
+}

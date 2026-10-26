@@ -14,6 +14,7 @@ import { parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
 import { accountBalances, bookBalance, loadAccountViews } from "../../ledger/overview";
+import { loadTerms } from "../../ledger/terms";
 import { createTransfer, transactionValues } from "../../ledger/transactions";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
@@ -55,7 +56,9 @@ type AccountBody = {
   goalId?: string | null;
   principal?: string;
   rate?: string;
-  startDate?: string;
+  /** How the rate is given: "year" (8.5% a year) or "month" (2% a month). */
+  ratePer?: string;
+  startDate?: string | null;
   endDate?: string | null;
   termMonths?: number;
   payout?: string;
@@ -100,17 +103,28 @@ async function accountFields(c: AppContext, body: AccountBody, type: AccountType
     if (p === null || p <= 0) return { error: "enter the amount" };
     v.principalMinor = p;
   }
+  if (body.ratePer !== undefined) {
+    if (body.ratePer !== "year" && body.ratePer !== "month") return { error: "the rate is a year or a month" };
+    v.ratePer = body.ratePer;
+  }
   if (body.rate !== undefined) {
     if (String(body.rate).trim() === "" || Number(body.rate) === 0) v.rateBp = 0;
     else {
+      const monthly = (v.ratePer ?? existing?.ratePer) === "month";
       const r = parseRate(String(body.rate));
-      if (r === null) return { error: "enter the yearly interest rate, like 8.5" };
-      v.rateBp = r;
+      if (r === null) return { error: monthly ? "enter the interest a month, like 1.5" : "enter the yearly interest rate, like 8.5" };
+      // Rates are kept yearly; 2% a month is 24% a year.
+      v.rateBp = monthly ? r * 12 : r;
     }
   }
   if (body.startDate !== undefined) {
-    if (!isDate(body.startDate)) return { error: "start date must be YYYY-MM-DD" };
-    v.startDate = body.startDate;
+    if (body.startDate === null || body.startDate === "") {
+      if (type === "deposit") return { error: "when did the deposit start?" };
+      v.startDate = null;
+    } else {
+      if (!isDate(body.startDate)) return { error: "start date must be YYYY-MM-DD" };
+      v.startDate = body.startDate;
+    }
   }
   if (body.endDate !== undefined) {
     if (body.endDate && !isDate(body.endDate)) return { error: "end date must be YYYY-MM-DD" };
@@ -174,7 +188,9 @@ async function accountFields(c: AppContext, body: AccountBody, type: AccountType
 accountRoutes.get("/accounts", async (c) => {
   const db = c.get("db");
   const household = c.get("household");
-  const views = await loadAccountViews(db, household.id, todayIn(household.timezone));
+  const today = todayIn(household.timezone);
+  const views = await loadAccountViews(db, household.id, today);
+  const terms = await loadTerms(db, views, today, household.currency);
   // Contacts carry their latest entry, so the khata list can say what happened last.
   const people = views.filter((a) => a.type === "person").map((a) => a.id);
   const last = new Map<string, { date: string; description: string | null; direction: string; amountMinor: number; transferPairId: string | null }>();
@@ -188,7 +204,7 @@ accountRoutes.get("/accounts", async (c) => {
       .limit(400);
     for (const r of rows) if (!last.has(r.accountId)) last.set(r.accountId, r);
   }
-  return c.json(views.map((r) => ({ ...r, csvMapping: r.csvMapping ? (JSON.parse(r.csvMapping) as unknown) : null, lastEntry: last.get(r.id) ?? null })));
+  return c.json(views.map((r) => ({ ...r, csvMapping: r.csvMapping ? (JSON.parse(r.csvMapping) as unknown) : null, lastEntry: last.get(r.id) ?? null, terms: terms.get(r.id) ?? null })));
 });
 
 accountRoutes.post("/accounts", requireWriter, async (c) => {

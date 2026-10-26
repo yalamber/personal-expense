@@ -9,6 +9,7 @@ import { useQuery } from "../query";
 import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Pending } from "./Pending";
+import { dueLine } from "./termsKit";
 import { CategorySelect, Checks, Icon, MonthSwitcher, amountInput, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
 
 /** Accounts that get bank statements; deposits, loans and money lent are kept by the family. */
@@ -101,15 +102,20 @@ export function Today({
           </span>
           <h1>
             {nothingYet
-              ? "Log this month's income, and the book will tell you what a day can cost."
-              : over
-                ? `This month is ${formatMoney(-data.everydayLeftMinor, cur)} past the plan.`
-                : data.mode === "unplanned"
-                  ? `${formatMoney(data.perDayMinor, cur)} a day, if the usual ${formatMoney(data.incomeMinor, cur)} comes in and nothing is set aside.`
-                  : data.mode === "expected"
-                    ? `${formatMoney(data.perDayMinor, cur)} a day keeps everything on plan, once the expected ${formatMoney(data.expectedPartMinor, cur)} is in.`
+              ? "Log this month's income when it comes in, and the book will tell you what a day can cost."
+              : data.mode === "waiting"
+                ? `Nothing has come in yet this month; ${formatMoney(data.spentMinor + data.goalsMinor + data.loansMinor + data.billsMinor, cur)} is spent or set aside.`
+                : over
+                  ? `This month is ${formatMoney(-data.everydayLeftMinor, cur)} past what came in.`
+                  : data.mode === "unplanned"
+                    ? `${formatMoney(data.perDayMinor, cur)} a day, with nothing set aside yet.`
                     : `${formatMoney(data.perDayMinor, cur)} a day keeps everything on plan.`}
           </h1>
+          {data.expectedLaterMinor > 0 && (
+            <span className="small" style={{ color: "var(--ink-soft)" }}>
+              {formatMoney(data.expectedLaterMinor, cur)} more is expected this month under Every month. It counts once it is in the book.
+            </span>
+          )}
           {data.mode === "unplanned" && canWrite && (
             <span className="small" style={{ color: "var(--ink-soft)" }}>
               Nothing is set aside yet, so the whole month reads as spending money. Add what comes{" "}
@@ -136,7 +142,7 @@ export function Today({
         </div>
         <dl className="ledger-sum">
           <div>
-            <dt>{data.incomeExpected ? "Expected in" : "Came in"}</dt>
+            <dt>Came in</dt>
             <dd className="amount-in">{formatMoney(data.incomeMinor, cur, { sign: true, symbol: false })}</dd>
           </div>
           <div>
@@ -360,6 +366,18 @@ export function Today({
               )}
               {weOwe === 0 && theyOwe === 0 && <span className="small muted">All settled.</span>}
               {weOwe > 0 && <span className="small muted">{people.filter((a) => a.balanceMinor < 0).sort((a, b) => a.balanceMinor - b.balanceMinor).slice(0, 3).map((a) => a.name).join(", ")}</span>}
+              {people
+                .filter((a) => a.endDate && a.balanceMinor !== 0)
+                .sort((a, b) => a.endDate!.localeCompare(b.endDate!))
+                .slice(0, 2)
+                .map((a) => {
+                  const due = dueLine(a, a.balanceMinor < 0 ? "owe" : "owed", data.today);
+                  return (
+                    <a key={a.id} className="small" href={`/h/${household.id}/khata/${a.id}`} onClick={onLinkClick} style={{ color: due?.late ? "var(--rust)" : "var(--marigold-deep)", textDecoration: "none" }}>
+                      {a.name}: {due?.text}
+                    </a>
+                  );
+                })}
             </section>
           )}
 
@@ -594,7 +612,7 @@ function BookRow({
 /** The arithmetic behind the headline, line by line, and where the income figure comes from. */
 function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
   const n = (m: number) => formatMoney(m, cur, { symbol: false });
-  const incomeLabel = data.incomeSource === "usual" ? "A usual month's income" : data.incomeExpected ? "Came in and expected" : "Came in";
+  const incomeLabel = "Came in this month";
   return (
     <details className="how">
       <summary>How is this worked out?</summary>
@@ -625,12 +643,7 @@ function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
         <span>{n(data.perDayMinor)} a day</span>
       </div>
       <span className="small muted">
-        {data.incomeSource === "usual"
-          ? `Nothing has come in yet this month, so ${data.usualMonths >= 2 ? `the average of the last ${data.usualMonths} months` : "the usual month from the starting point"} stands in. `
-          : data.incomeExpected
-            ? "Income listed under Every month and not yet in the book is counted as if it were in. "
-            : ""}
-        Goals count the larger of what is planned and what has moved this month. The day figure is rounded down to whole {cur === "NPR" || cur === "INR" ? "rupees" : "units"}.
+        Only income already in the book counts{data.expectedLaterMinor > 0 ? `; the ${formatMoney(data.expectedLaterMinor, cur)} still expected under Every month joins when it is logged` : ""}.         Goals count the larger of what is planned and what has moved this month. The day figure is rounded down to whole {cur === "NPR" || cur === "INR" ? "rupees" : "units"}.
       </span>
     </details>
   );

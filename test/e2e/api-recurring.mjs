@@ -35,12 +35,11 @@ ok(list[0].status.state === expectState(1) && list[0].status.due === `${month}-0
 ok(list[1].status.state === expectState(7) && list[2].status.state === expectState(28), `Salary is ${expectState(7)}, Internet ${expectState(28)}`);
 ok((await call("GET", `${H}/recurring?month=nope`)).status === 400, "a bad month is refused");
 
-// --- Today sets bills aside and expects the income ---
+// --- Today sets bills aside; income still to come is shown, not counted ---
 let t = (await call("GET", `${H}/today`, null, 200)).data;
 ok(t.billsMinor === rs(26_500), `bills still to come: ${t.billsMinor / 100} (rent and internet)`);
-ok(t.incomeMinor === rs(90_000) && t.incomeExpected && t.incomeSource === "recurring" && t.expectedPartMinor === rs(90_000), "the salary stands in as expected income");
-ok(t.mode === "expected", "the headline is in its 'expected' mode");
-ok(t.everydayLeftMinor === rs(90_000) - rs(26_500) && t.perDayMinor === wholeRupees(t.everydayLeftMinor, t.daysLeft), `${t.perDayMinor / 100} a day: (90,000 − 26,500) over ${t.daysLeft} days, whole rupees`);
+ok(t.incomeMinor === 0 && t.expectedLaterMinor === rs(90_000), "the salary still to come is shown as expected, not counted");
+ok(t.mode === "waiting" && t.perDayMinor === 0 && t.everydayLeftMinor === -rs(26_500), "with nothing in yet, the headline waits and the day figure is nil");
 ok(t.comingUp.length === 3 && t.comingUp.every((r) => r.state === expectState(r.due.slice(8) * 1)), "Today lists all three for its card");
 
 const hints = (await call("GET", `${H}/log-hints`, null, 200)).data;
@@ -61,14 +60,15 @@ list = (await call("GET", `${H}/recurring`, null, 200)).data;
 ok(list[0].status.state === "posted" && list[0].status.transactionId === posted.id, "the list shows the rent as posted");
 t = (await call("GET", `${H}/today`, null, 200)).data;
 ok(t.billsMinor === rs(1_500) && t.spentMinor === rs(25_000), "paid, it moves from bills to come into spent");
-ok(t.perDayMinor === wholeRupees(rs(90_000) - rs(25_000) - rs(1_500), t.daysLeft), "and the day figure follows");
+ok(t.incomeMinor === 0 && t.perDayMinor === 0 && t.mode === "waiting", "still nothing in, so still no day figure");
 
 // --- The salary needs an account when the item has none ---
 const noAcct = await call("POST", `${H}/recurring/${pay}/post`, {});
 ok(noAcct.status === 400 && /account/.test(noAcct.data.error), "income with no account set asks for one");
 await call("POST", `${H}/recurring/${pay}/post`, { accountId: salary, date: today }, 201);
 t = (await call("GET", `${H}/today`, null, 200)).data;
-ok(t.incomeMinor === rs(90_000) && !t.incomeExpected && t.incomeSource === "logged" && t.mode === "ok", "once the salary is in the book, the income is real and the headline plain");
+ok(t.incomeMinor === rs(90_000) && t.expectedLaterMinor === 0 && t.mode === "ok", "once the salary is in the book it counts, and the headline is plain");
+ok(t.perDayMinor === wholeRupees(rs(90_000) - rs(25_000) - rs(1_500), t.daysLeft), `${t.perDayMinor / 100} a day: (90,000 − 25,000 − 1,500) over ${t.daysLeft} days, whole rupees`);
 
 // --- Skip, undo, handled outside the book ---
 await call("POST", `${H}/recurring/${net}/skip`, {}, 200);
@@ -134,17 +134,20 @@ txs = (await call("GET", `${H}/transactions?month=${month}`, null, 200)).data;
 const fixed = txs.find((x) => x.id === viaChip.id);
 ok(fixed.amountMinor === rs(3_200) && fixed.date === addDays(today, -2) && fixed.description === "Gym (annual)", "an entry's amount, date and name can be corrected");
 
-// --- The headline's other modes: a usual month typed in, nothing planned ---
+// --- The headline's other modes: a usual month typed in is never counted as income ---
 const b = (await call("POST", "/api/households", { name: "Usual family", currency: "NPR", timezone: "UTC", memberName: "Tester" }, 201)).data.id;
 const B = `/api/households/${b}`;
 await call("POST", `${B}/accounts`, { name: "Bank", type: "checking", balance: "100000" }, 201);
 await call("PATCH", B, { typicalIncome: "1900000", typicalSpend: "0" }, 200);
 t = (await call("GET", `${B}/today`, null, 200)).data;
-ok(t.mode === "unplanned" && t.incomeSource === "usual" && t.incomeExpected && t.incomeMinor === rs(1_900_000), "a usual month with nothing planned reads as 'unplanned'");
-ok(t.perDayMinor === wholeRupees(rs(1_900_000), t.daysLeft), `${t.perDayMinor / 100} a day is the whole usual month over ${t.daysLeft} days`);
+ok(t.mode === "nothing" && t.incomeMinor === 0 && t.perDayMinor === 0, "a usual month of Rs 19,00,000 with nothing logged gives no day figure");
+const bank = (await call("GET", `${B}/accounts`, null, 200)).data[0].id;
+await call("POST", `${B}/transactions`, { date: today, amount: "120000", direction: "in", accountId: bank, categoryId: null, description: "Salary" }, 201);
+t = (await call("GET", `${B}/today`, null, 200)).data;
+ok(t.mode === "unplanned" && t.incomeMinor === rs(120_000) && t.perDayMinor === wholeRupees(rs(120_000), t.daysLeft), "income in and nothing set aside reads as 'unplanned'");
 await call("POST", `${B}/goals`, { name: "Land", kind: "purchase", target: "2500000", monthly: "20000" }, 201);
 t = (await call("GET", `${B}/today`, null, 200)).data;
-ok(t.mode === "expected" && t.goalsMinor === rs(20_000) && t.perDayMinor === wholeRupees(rs(1_880_000), t.daysLeft), "a monthly amount for a goal turns it into a plan");
+ok(t.mode === "ok" && t.goalsMinor === rs(20_000) && t.perDayMinor === wholeRupees(rs(100_000), t.daysLeft), "a monthly amount for a goal turns it into a plan");
 ok((await fetch(`${BASE}${B}/today`, { headers: { cookie: state.cookie } })).status === 200, "plain fetch with the cookie works too");
 
 console.log(`\nEvery month: all good. Household ${hh}`);

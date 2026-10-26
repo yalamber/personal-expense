@@ -47,7 +47,7 @@ ok(t.needsStart === false, "starting point done");
 ok(t.worth.haveMinor === have && t.worth.oweMinor === owe && t.worth.netMinor === have - owe, `worth: have ${have / 100}, owe ${owe / 100}`);
 ok(t.worth.accruedMinor > 0, `FD interest so far ${t.worth.accruedMinor / 100}`);
 ok(t.loansMinor === 3_200_000 + by(car).installmentMinor || t.loansMinor === 3_200_000, `loan installments this month ${t.loansMinor / 100}`);
-ok(t.incomeExpected && t.incomeMinor === 15_000_000, "Today expects the usual month's income");
+ok(t.incomeMinor === 0 && t.mode === "waiting", "a usual month is for the Plan; Today counts only income in the book");
 
 const plan = (await call("GET", `${H}/plan`, null, 200)).data;
 ok(plan.basis.source === "typical" && plan.basis.incomeMinor === 15_000_000, "Plan uses the usual month until the book has two");
@@ -95,7 +95,7 @@ ok(by(fdB).closedAt && by(savings).balanceMinor === 120_000_000 - 10_000_000 + 1
 cards = (await call("GET", `${H}/decide`, null, 200)).data;
 ok(!cards.some((c) => c.kind === "maturity"), "renewed FD leaves Decide");
 t = (await call("GET", `${H}/today`, null, 200)).data;
-ok(t.incomeExpected && t.incomeMinor === 15_000_000 && t.spentMinor === 2_000_000, "interest left in the FD is not this month's income; the EMI interest is spending");
+ok(t.incomeMinor === 0 && t.spentMinor === 2_000_000, "interest left in the FD is not this month's income; the EMI interest is spending");
 
 // Email on the statements subdomain reaches the same household.
 const info = (await call("GET", H, null, 200)).data;

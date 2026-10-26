@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { monthName } from "../../../shared/plan";
 import { todayIn } from "../../../shared/dates";
+import { addMonths } from "../../../shared/deposit";
+import { rateText } from "../../../shared/terms";
 import { api, ApiError, type Account, type Category, type DecideCard, type Household, type RecurringCandidate } from "../api";
 import { onLinkClick } from "../router";
 import { PageSkeleton } from "../skeleton";
@@ -244,6 +246,8 @@ export function Decide({ household, accounts, categories, version, onChanged }: 
       {card?.kind === "maturity" && <MaturityCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
 
       {card?.kind === "installment" && <InstallmentCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
+
+      {card?.kind === "settle" && <SettleCard key={card.key} card={card} household={household} accounts={accounts} categories={categories} busy={busy} canWrite={canWrite} act={act} later={later} />}
 
       {card?.kind === "recurring" && <RecurringCard key={card.key} card={card} household={household} accounts={accounts} busy={busy} canWrite={canWrite} act={act} later={later} />}
 
@@ -588,6 +592,100 @@ function InboxCard({ card, household, busy, act, later }: CardProps<"inbox">) {
           onDismiss={() => act(() => api.dismissStatement(household.id, card.statementId), `"${data.subject ?? "The email"}" set aside: not a statement.`)}
           onLater={() => later("An email")}
         />
+      )}
+    </section>
+  );
+}
+
+/**
+ * Money between people with its settle-by date a week away or past: pay it (or say it came back),
+ * with the interest if there is any, or move the date.
+ */
+function SettleCard({ card, household, accounts, categories, busy, canWrite, act, later }: CardProps<"settle"> & { categories: Category[] }) {
+  const cur = household.currency;
+  const today = todayIn(household.timezone);
+  const others = spendable(accounts);
+  const weOwe = card.balanceMinor < 0;
+  const owed = Math.abs(card.balanceMinor);
+  const interest = Math.abs(card.interestMinor);
+  const [from, setFrom] = useState(others[0]?.id ?? "");
+  const [withInterest, setWithInterest] = useState(interest > 0);
+  const [moving, setMoving] = useState(false);
+  const [newDate, setNewDate] = useState(addMonths(card.settleBy < today ? today : card.settleBy, 1));
+  const total = owed + (withInterest ? interest : 0);
+  const when = card.days === 0 ? "today" : card.days > 0 ? `in ${card.days} ${card.days === 1 ? "day" : "days"}` : `${-card.days} ${card.days === -1 ? "day" : "days"} ago`;
+  const otherName = others.find((a) => a.id === from)?.name ?? "the account";
+  const expenseCat = categories.find((c) => /^interest$/i.test(c.name) && c.kind !== "income")?.id ?? null;
+  const incomeCat = categories.find((c) => /interest/i.test(c.name) && c.kind === "income")?.id ?? null;
+
+  async function settle() {
+    if (card.type === "person") {
+      if (withInterest && interest > 0) {
+        await api.addEntry(household.id, card.accountId, { kind: weOwe ? "credit" : "charge", amount: amountInput(interest, cur), date: today, categoryId: weOwe ? expenseCat : incomeCat, description: `Interest to ${shortDate(today)}` });
+      }
+      await api.addEntry(household.id, card.accountId, { kind: weOwe ? "gave" : "got", amount: amountInput(total, cur), date: today, otherAccountId: from, description: weOwe ? "Paid back in full" : "Got it back in full" });
+    } else {
+      await api.repayment(household.id, card.accountId, { amount: amountInput(owed, cur), date: today, otherAccountId: from });
+      if (withInterest && interest > 0) {
+        await api.addTransaction(household.id, { date: today, amount: amountInput(interest, cur), direction: "in", accountId: from, categoryId: incomeCat, description: `Interest: ${card.name}`, note: "", isPersonal: false, force: true });
+      }
+    }
+  }
+
+  return (
+    <section className="decide-card" aria-label="Money to settle">
+      <span className="eyebrow" style={{ color: card.days < 0 ? "var(--rust)" : "var(--marigold-deep)" }}>
+        {weOwe ? "To pay back" : "Money owed to us"} · {card.days < 0 ? `the date was ${when}` : `due ${when}`}
+      </span>
+      <h2>
+        {weOwe
+          ? `Pay ${card.name} back ${formatMoney(owed, cur)}${interest ? ` and ${formatMoney(interest, cur)} interest` : ""}${card.days < 0 ? `; the date was ${shortDate(card.settleBy)}.` : ` by ${shortDate(card.settleBy)}?`}`
+          : `${card.name} was to pay back ${formatMoney(owed, cur)}${interest ? ` and ${formatMoney(interest, cur)} interest` : ""} by ${shortDate(card.settleBy)}. Did it come?`}
+      </h2>
+      <span className="small" style={{ color: "var(--ink-soft)" }}>
+        {card.rateBp ? `${rateText(card.rateBp, card.ratePer)}, simple interest to today.` : "No interest: a friendly loan."} The date was your own plan; move it if plans changed.
+      </span>
+      {canWrite && (
+        <>
+          <div className="row" style={{ alignItems: "flex-end" }}>
+            <label style={{ flex: "1 1 180px" }}>
+              {weOwe ? "Paid from" : "Came into"}
+              <select value={from} onChange={(e) => setFrom(e.target.value)}>
+                {others.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          </div>
+          {interest > 0 && (
+            <label className="check">
+              <input type="checkbox" checked={withInterest} onChange={(e) => setWithInterest(e.target.checked)} />
+              <span>With the {formatMoney(interest, cur)} interest</span>
+            </label>
+          )}
+          <div className="actions">
+            <button type="button" disabled={busy || !from} onClick={() => act(settle, weOwe ? `${card.name}: ${formatMoney(total, cur)} paid from ${otherName}.` : `${card.name}: ${formatMoney(total, cur)} back into ${otherName}.`)}>
+              {weOwe ? `Paid ${formatMoney(total, cur)}` : `Yes, ${formatMoney(total, cur)} came back`}
+            </button>
+            {!moving ? (
+              <button type="button" className="secondary" disabled={busy} onClick={() => setMoving(true)}>
+                Move the date
+              </button>
+            ) : (
+              <div className="row" style={{ alignItems: "flex-end" }}>
+                <label style={{ flex: "1 1 160px" }}>
+                  New date
+                  <input type="date" value={newDate} min={today} onChange={(e) => e.target.value && setNewDate(e.target.value)} />
+                </label>
+                <button type="button" className="secondary" disabled={busy} onClick={() => act(() => api.updateAccount(household.id, card.accountId, { endDate: newDate }), `${card.name}: moved to ${shortDate(newDate)}.`)}>
+                  Save the date
+                </button>
+              </div>
+            )}
+            <button type="button" className="quiet" onClick={() => later(card.name)}>
+              Later
+            </button>
+          </div>
+          <span className="small muted">Paid part of it? Add the entry on {card.name}'s khata page.</span>
+        </>
       )}
     </section>
   );
