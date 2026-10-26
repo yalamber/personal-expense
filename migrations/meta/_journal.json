@@ -78,6 +78,13 @@
       "when": 1793023832905,
       "tag": "0010_big_purchases",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1793039037276,
+      "tag": "0011_ai",
+      "breakpoints": true
     }
   ]
 }

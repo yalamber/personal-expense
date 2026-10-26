@@ -1,7 +1,7 @@
 import PostalMime from "postal-mime";
 import { describe, expect, it } from "vitest";
-import { alertParser, findDate, readAlert } from "../src/worker/ingest/parsers/alerts";
-import { plainText } from "../src/worker/ingest/parsers/text";
+import { alertParser, findDate, readAlert, readAll, whyUnread } from "../src/worker/ingest/parsers/alerts";
+import { plainText, tableLines, tableRows } from "../src/worker/ingest/parsers/text";
 import { findParser } from "../src/worker/ingest/parsers";
 
 const mime = (headers: Record<string, string>, body: string, type = "text/plain") =>
@@ -90,5 +90,118 @@ describe("findDate and readAlert", () => {
   });
   it("turns HTML into lines of text", () => {
     expect(plainText("<p>Dear&nbsp;Customer,</p><div>NPR 1,500.00 debited</div><br>Bye &amp; thanks")).toBe("Dear Customer,\nNPR 1,500.00 debited\n\nBye & thanks");
+  });
+});
+
+/** A bank template the way it really arrives: indented source, layout tables around the real one. */
+const template = (rows: string) => `<!DOCTYPE html>
+<html>
+  <head>
+    <title>Transaction Alert</title>
+    <style>td { font-family: Arial; }</style>
+  </head>
+  <body>
+    <table width="100%" cellpadding="0">
+      <tr>
+        <td align="center">
+          <table width="600">
+            <tr>
+              <td>
+                <p>Dear Customer,</p>
+                <p>
+                  The following transaction has been
+                  made on your account.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table border="1">
+${rows}
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <p>If you have received this email in error, please delete it. Never share your PIN or OTP.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+const row = (a: string, b: string) => `                  <tr>\n                    <td>\n                      ${a}\n                    </td>\n                    <td>\n                      ${b}\n                    </td>\n                  </tr>`;
+
+describe("alerts as banks really send them", () => {
+  it("reads an indented table whose labels and values sit on separate source lines", async () => {
+    const html = template(
+      [row("Account Number", "0101XXXXXXX89"), row("Transaction Date", "26-Oct-2026 14:03:11"), row("Transaction Amount", "NPR 1,500.00"), row("Transaction Type", "DR"), row("Remarks", "ESEWA LOAD 9841XXXXXX"), row("Available Balance", "NPR 1,23,456.78")].join("\n"),
+    );
+    const lines = await parse(base, html, "text/html");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ kind: "out", amountMinor: 150_000, date: "2026-10-26", description: "ESEWA LOAD 9841XXXXXX", confidence: 70 });
+  });
+
+  it("reads cells that wrap their text in paragraphs and spans", async () => {
+    const html = template(
+      [row("<p><b>Amount (NPR)</b></p>", "<p><span>25,000.00</span></p>"), row("<p>Debit/Credit</p>", "<p>Credit</p>"), row("<p>Narration</p>", "<p>SALARY OCT&#x2F;2026</p>"), row("<p>Value Date</p>", "<p>07/10/2026</p>")].join("\n"),
+    );
+    const lines = await parse(base, html, "text/html");
+    expect(lines[0]).toMatchObject({ kind: "in", amountMinor: 2_500_000, date: "2026-10-07", description: "SALARY OCT/2026" });
+  });
+
+  it("reads a header row over a row of values, taking the column that has the amount", async () => {
+    const html = template(
+      `<tr><th>Date</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>\n<tr><td>25/10/2026</td><td>POS BHATBHATENI</td><td>3,240.50</td><td></td><td>50,000.00</td></tr>`,
+    );
+    const lines = await parse(base, html, "text/html");
+    expect(lines[0]).toMatchObject({ kind: "out", amountMinor: 324_050, date: "2026-10-25", description: "POS BHATBHATENI" });
+  });
+
+  it("skips a zero in the other column", async () => {
+    const html = template([row("Credit Amount", "0.00"), row("Debit Amount", "NPR 800.00"), row("Particulars", "NTC TOPUP")].join("\n"));
+    expect((await parse(base, html, "text/html"))[0]).toMatchObject({ kind: "out", amountMinor: 80_000, description: "NTC TOPUP" });
+  });
+
+  it("pairs a label line with the value on the next line in plain text", async () => {
+    const text = "Dear Customer,\r\n\r\nTransaction Amount\r\nNPR 4,000.00\r\nTransaction Type\r\nWithdrawal\r\nTransaction Date\r\n24-OCT-26\r\nRemarks\r\nATM NEW ROAD\r\n";
+    expect((await parse(base, text))[0]).toMatchObject({ kind: "out", amountMinor: 400_000, date: "2026-10-24", description: "ATM NEW ROAD" });
+  });
+
+  it("falls back to the one amount and the only direction named, with a lower confidence", async () => {
+    const lines = await parse(base, "Dear Customer, NPR. 2,000.00 DR from your account ending 89. Ref 7781. If you have received this email in error, delete it.");
+    expect(lines[0]).toMatchObject({ kind: "out", amountMinor: 200_000, confidence: 55 });
+  });
+
+  it("does not let a footer's 'received' or a credit card advert decide the direction", () => {
+    expect(readAll("Amount: NPR 900.00\nType: Debit\nApply for a Nabil Credit Card. If you received this in error, ignore it.")).toMatchObject({ kind: "out", amountMinor: 90_000 });
+  });
+
+  it("says why nothing was read, and what it found", () => {
+    expect(whyUnread("Your OTP is 482913.", null).why).toMatch(/No amount/);
+    expect(whyUnread("Available balance NPR 5,000.00", null).why).toMatch(/balance/);
+    const one = whyUnread("Amount NPR 1,500.00 on 26/10/2026. Remarks: ESEWA LOAD", null);
+    expect(one.why).toMatch(/1,500\.00.*went out or came in/);
+    expect(one.guess).toMatchObject({ amountMinor: 150_000, date: "2026-10-26", description: "ESEWA LOAD" });
+  });
+
+  it("explains through the parser when parse finds nothing", async () => {
+    const email = await new PostalMime().parse(mime(base, "Fund transfer of NPR 7,500.00 to RAM BAHADUR, ref 991.\r\nIf you have received this email in error, delete it."));
+    expect(await alertParser.parse(email, [])).toEqual([]);
+    expect(alertParser.explain!(email)).toMatchObject({ guess: { amountMinor: 750_000 } });
+  });
+});
+
+describe("HTML to text", () => {
+  it("treats source line breaks as spaces and decodes every kind of entity", () => {
+    expect(plainText("<td>\n  Transaction\n  Amount\n</td><td>&#8377;&nbsp;1,500&#x2E;00</td>")).toBe("Transaction Amount ₹ 1,500.00");
+    expect(plainText("<head><title>Alert</title></head><body><!-- x --><p>Hi</p></body>")).toBe("Hi");
+  });
+  it("finds the innermost table rows and pairs labels with values", () => {
+    const rows = tableRows("<table><tr><td><table><tr><td>Amount</td><td>:</td><td>NPR 5.00</td></tr></table></td></tr></table>");
+    expect(rows).toEqual([["Amount", ":", "NPR 5.00"]]);
+    expect(tableLines(rows)).toEqual(["Amount: NPR 5.00"]);
   });
 });

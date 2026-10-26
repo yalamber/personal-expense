@@ -109,12 +109,27 @@ from it, and the email's text. The accounts that take statements are listed with
 chosen and the reason (already reads this sender, same bank domain, or the bank's name in the
 sender), "remember this sender" on by default, and "Not a bank email". Settings › Inbox lists every
 email and opens each to the same view. Without a bank-specific parser, the generic alert reader
-(`src/worker/ingest/parsers/alerts.ts`) takes one amount next to a debit or credit word, a date
-in the text (Bikram Sambat dates are skipped in favour of the email's own date) and the remarks
-line, and queues the line for review at a confidence below auto-post, so the family sees each
-alert once in Decide. An email with no transaction in it is marked "no parser yet" with the
-reason. Admins can download any email as `.eml` from Settings › Inbox; one sample per bank is
-enough to write an exact parser.
+(`src/worker/ingest/parsers/alerts.ts`) reads sentences ("debited by NPR 1,500.00"), label lines
+and tables ("Transaction Type | Debit", "Amount (NPR) | 1,500.00", a header row over a row of
+values), whatever the template's indentation (HTML source line breaks are spaces), with the
+footer's "if you have received this email" kept out of the direction. It takes a date from a Date
+row, else the text (Bikram Sambat dates are skipped in favour of the email's own date), and the
+remarks, and queues the line for review at a confidence below auto-post, so the family sees each
+alert once in Decide. Where it finds nothing, **Workers AI** reads the email
+(`src/worker/ai/read.ts`); an amount it gives is kept only if it is written in the email and not
+only as a balance, and its lines wait in Decide like any alert. An email still unread says why
+("It has an amount, 7,500.00, but nothing saying whether that went out or came in") and can be
+filled in by hand from the Inbox, starting from what was found; the line goes through the same
+duplicate checks. Admins can download any email as `.eml` from Settings › Inbox; one sample per
+bank is enough to write an exact parser.
+
+**AI help.** Lines merchant memory knows nothing about get a category suggestion from Workers AI
+(`src/worker/ai/categorize.ts`, model `@cf/meta/llama-3.3-70b-instruct-fp8-fast`), picked from the
+household's own categories and suited to the direction of the money; Decide marks it as the AI's
+guess, and once filed, merchant memory takes over for that name. Suggestions run after an email is
+read, after a CSV upload (in the background) and nightly for anything still waiting. An admin can
+turn AI help off in Settings › Household. Workers AI keeps no copy of what it is sent and does not
+train on it. Every AI answer is checked, and a failed call leaves the app on its built-in readers.
 
 **Planning big purchases.** A goal can be saved for in full, or saved in part and borrowed for the
 rest (amount, yearly rate, years). Only the down payment is saved; once it is bought the
@@ -181,6 +196,10 @@ npm run dev                         # builds the web app on change and runs wran
 
 Open http://localhost:8787, enter an email, and copy the sign-in link from the terminal
 (`MAILER=log` prints outgoing mail instead of sending it).
+
+Workers AI always runs on Cloudflare, so `wrangler dev` needs `wrangler login` for the AI binding.
+Without a login run `npx wrangler dev --local`: the AI is left out and the app works on its
+built-in readers (the end-to-end runner does this).
 
 To try the email path locally, send a raw message to the local Email Worker:
 
@@ -326,6 +345,7 @@ src/worker/          Worker: API, email handler, parse step, cron
                      home (today, decide, log hints)
   ledger/            Categories, merchant memory, transactions and transfers
   ingest/            Email Worker, parse step, ingest pipeline, parser registry and the generic alert reader
+  ai/                Workers AI: reading emails the readers cannot, category suggestions (answers checked)
   lib/               Small Worker helpers
 src/shared/plan.ts   The long-term plan simulator (priority order, rollover, price rise, freed EMIs), used by both sides
 src/shared/deposit.ts, loan.ts   Fixed-deposit interest and maturity; EMI, interest split, months left

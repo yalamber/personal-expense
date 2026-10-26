@@ -234,6 +234,32 @@ if (every) {
       await page.locator(".mail-open .mail-meta").waitFor({ timeout: 10000 });
       ok(/ESEWA LOAD/.test(await page.locator(".mail-open").innerText()), "and opens to the same details");
       await shot(page, "inbox-open-phone", { fullPage: true });
+
+      // One the readers cannot place: the Inbox says why and lets a person say what it is.
+      const vague = eml.replace("browser-held-1", "browser-vague-1").replace(/Dear Customer,[\s\S]*$/, "Dear Customer, fund transfer of NPR 7,500.00 to RAM BAHADUR on 25/10/2026.");
+      await fetch(`${BASE}/cdn-cgi/handler/email?from=${encodeURIComponent("postmaster@mail-wr1-x436.google.com")}&to=${encodeURIComponent(to)}`, { method: "POST", body: vague });
+      await new Promise((res) => setTimeout(res, 1500));
+      await page.reload({ waitUntil: "networkidle" });
+      const unread = page.locator("button.mail-row").filter({ hasText: "not read" }).first();
+      await unread.click();
+      const form = page.locator("form.fill-by-hand");
+      await form.waitFor({ timeout: 10000 });
+      const open = (await page.locator(".mail-open").innerText()).replace(/\s+/g, " ");
+      ok(/Not read\. It has an amount, 7,500\.00/.test(open), "phone: an unread email says why");
+      ok((await form.locator("input[inputmode=decimal]").inputValue()) === "7500" && (await form.locator("input[type=date]").inputValue()) === "2026-10-25", "phone: the form starts from the amount and date it found");
+      ok(await form.getByRole("button", { name: "Choose money out or in" }).isDisabled(), "phone: it asks which way the money went");
+      await form.getByRole("button", { name: "Money out", exact: true }).click();
+      await form.locator("input").last().fill("Ram Bahadur");
+      await shot(page, "inbox-fill-phone", { fullPage: true });
+      await form.getByRole("button", { name: "Add it as money out" }).click();
+      await page.locator(".mail-open .ok").waitFor({ timeout: 10000 });
+      ok(/waits in Decide/.test(await page.locator(".mail-open .ok").innerText()), "phone: filled in, it waits in Decide");
+      const overflow2 = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      ok(overflow2 <= 0, "phone: the form fits the screen");
+
+      await page.goto(`${BASE}/h/${every.hh}/settings/household`, { waitUntil: "networkidle" });
+      const aiCard = page.locator("section[aria-labelledby=ai-h]");
+      ok(/AI help/.test(await aiCard.innerText()) && (await aiCard.locator("input[type=checkbox]").isChecked()), "phone: AI help is in Settings, on");
     }
     await ctx.close();
   }

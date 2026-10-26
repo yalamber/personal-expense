@@ -61,6 +61,12 @@
   //   "consumers": [{ "queue": "personal-expense-parse", "max_batch_size": 5, "max_retries": 3 }]
   // },
 
+  // Workers AI: reads statement emails the built-in readers cannot, and suggests categories for new
+  // lines. Runs on Cloudflare's network under this account (free daily allowance, then per use);
+  // a household can turn it off in Settings. Local development needs `wrangler login` for it, or
+  // `wrangler dev --local`, which leaves it out: the app then carries on with its built-in readers.
+  "ai": { "binding": "AI" },
+
   // Outgoing email through Cloudflare Email Service. On the Workers Free plan it delivers only to
   // addresses verified under Email Routing > Destination addresses (free). Onboarding the domain
   // for Email Sending (Workers Paid) lifts that restriction.

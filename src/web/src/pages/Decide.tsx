@@ -333,6 +333,9 @@ function CategoryCard({
             Category
             <CategorySelect categories={categories} value={categoryId} onChange={setCategoryId} label="Category" filter={(c) => (isIn ? c.kind === "income" || c.kind === "need" || c.kind === "want" : c.kind !== "income")} />
           </label>
+          {card.suggestedBy === "ai" && categoryId && categoryId === card.suggestedCategoryId && (
+            <span className="small ai-guess">The AI's guess from the name. Check it: once you file it, the app remembers this name.</span>
+          )}
           <div className="actions">
             <button type="button" disabled={busy || !categoryId} onClick={() => act(() => api.acceptMany(household.id, card.lineIds, categoryId), `${card.description} filed under ${categoryLabel(categories, categoryId)}.`)}>
               {categoryId ? `File under ${categoryLabel(categories, categoryId)}` : "Choose a category above"}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Household, type Statement, type StatementStatus } from "../api";
 import { PageSkeleton } from "../skeleton";
-import { LinkAccount, MailDetails, MailSkeleton, WhyHeld, useMailPreview, when } from "./MailView";
+import { FillByHand, LinkAccount, MailDetails, MailSkeleton, WhyHeld, filledMessage, useMailPreview, when } from "./MailView";
 
 /** What each status means to the family, and whether it waits on them. */
 const STATUS: Record<StatementStatus, { label: string; tone: "amber" | "teal" | "grey"; waits: boolean }> = {
@@ -120,12 +120,12 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
   const [failure, setFailure] = useState<string | null>(null);
   const isAdmin = household.me.role === "admin";
 
-  async function run(fn: () => Promise<unknown>, message: string) {
+  async function run<T>(fn: () => Promise<T>, message: string | ((result: T) => string)) {
     setBusy(true);
     setFailure(null);
     try {
-      await fn();
-      setDone(message);
+      const result = await fn();
+      setDone(typeof message === "function" ? message(result) : message);
       onChanged();
       void reload();
     } catch (e) {
@@ -141,7 +141,7 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
       {!data && !error && <MailSkeleton />}
       {data && (
         <>
-          {st.error && st.status !== "quarantined" && (
+          {st.error && st.status !== "quarantined" && st.status !== "unparsed" && (
             <div className="why" role="note">
               {st.error}
             </div>
@@ -176,6 +176,14 @@ function InboxDetail({ household, statement: st, onChanged }: { household: House
                 </a>
               )}
             </div>
+          )}
+          {(st.status === "unparsed" || st.status === "failed") && st.accountId && household.me.role !== "viewer" && !done && !data.missing && (
+            <FillByHand
+              household={household}
+              preview={data}
+              busy={busy}
+              onSubmit={(body) => void run(() => api.fillStatement(household.id, st.id, body), filledMessage)}
+            />
           )}
         </>
       )}

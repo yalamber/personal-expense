@@ -81,7 +81,7 @@ export type DecideCard =
     }
   | { kind: "balance"; key: string; accountId: string; accountName: string; bankMinor: number; bookMinor: number; asOf: string; suspects: { id: string; date: string; amountMinor: number; direction: string; name: string | null; byName: string | null }[] }
   | { kind: "recurring"; key: string; recurringId: string; name: string; direction: "out" | "in"; amountMinor: number; due: string; month: string; accountId: string | null; categoryId: string | null; note: string | null }
-  | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null }
+  | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null; suggestedBy: "memory" | "ai" | null }
   | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number }
   | {
       kind: "maturity";
@@ -163,6 +163,7 @@ async function lineCards(db: Db, householdId: string, memberId: string): Promise
       amountMinor: schema.importLines.parsedAmountMinor,
       description: schema.importLines.parsedDescription,
       suggestedCategoryId: schema.importLines.suggestedCategoryId,
+      suggestedBy: schema.importLines.suggestedBy,
       matchTransactionId: schema.importLines.matchTransactionId,
       source: schema.statementEmails.subject,
       accountName: schema.accounts.name,
@@ -216,14 +217,17 @@ async function lineCards(db: Db, householdId: string, memberId: string): Promise
     }
     const { key, display } = normalizeMerchant(l.description ?? "");
     const group = groups.get(key);
-    const suggestion = merchants.get(key)?.defaultCategoryId ?? l.suggestedCategoryId;
+    const remembered = merchants.get(key)?.defaultCategoryId ?? null;
+    const suggestion = remembered ?? l.suggestedCategoryId;
+    const suggestedBy = remembered ? "memory" : l.suggestedCategoryId ? (l.suggestedBy === "ai" ? "ai" : "memory") : null;
     if (group) {
+      if (!group.suggestedCategoryId && suggestion) Object.assign(group, { suggestedCategoryId: suggestion, suggestedBy });
       group.lineIds.push(l.id);
       group.count++;
       group.totalMinor += l.amountMinor ?? 0;
       group.lastDate = l.date;
     } else {
-      groups.set(key, { kind: "category", key: `cat:${key}`, lineIds: [l.id], description: display || l.description || "(no description)", count: 1, totalMinor: l.amountMinor ?? 0, firstDate: l.date, lastDate: l.date, accountName: l.accountName, suggestedCategoryId: suggestion });
+      groups.set(key, { kind: "category", key: `cat:${key}`, lineIds: [l.id], description: display || l.description || "(no description)", count: 1, totalMinor: l.amountMinor ?? 0, firstDate: l.date, lastDate: l.date, accountName: l.accountName, suggestedCategoryId: suggestion, suggestedBy });
     }
   }
   // Biggest groups first: one decision clears the most lines.

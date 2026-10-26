@@ -23,7 +23,8 @@ if (!process.env.E2E_SKIP_BUILD) sh("npm run build");
 sh(`npx wrangler d1 migrations apply personal-expense --local --persist-to "${state}"`);
 
 const out = openSync(log, "a");
-const dev = spawn("npx", ["wrangler", "dev", "--port", String(port), "--persist-to", state, "--var", "MAILER:log", "--var", `APP_ORIGIN:${BASE}`], { cwd: root, stdio: ["ignore", out, out], detached: true, env });
+// --local: no remote bindings, so Workers AI is left out and the app runs on its built-in readers.
+const dev = spawn("npx", ["wrangler", "dev", "--local", "--port", String(port), "--persist-to", state, "--var", "MAILER:log", "--var", `APP_ORIGIN:${BASE}`], { cwd: root, stdio: ["ignore", out, out], detached: true, env });
 const stop = () => {
   try {
     process.kill(-dev.pid, "SIGTERM");

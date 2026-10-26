@@ -41,6 +41,8 @@ export const households = sqliteTable("households", {
   typicalSpendMinor: integer("typical_spend_minor"),
   /** Secret token in the inbound address: stmt+<token>@domain */
   inboundToken: text("inbound_token").notNull().unique(),
+  /** Workers AI reads emails the built-in readers cannot and suggests categories. On unless turned off. */
+  aiEnabled: integer("ai_enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull().default(now),
 });
 
@@ -463,6 +465,8 @@ export const importLines = sqliteTable(
     /** 0..1 confidence of the parse plus categorisation. */
     confidence: integer("confidence").notNull().default(0),
     suggestedCategoryId: text("suggested_category_id").references(() => categories.id),
+    /** "ai" when the suggested category is Workers AI's guess rather than merchant memory. */
+    suggestedBy: text("suggested_by", { enum: ["ai"] }),
     matchTransactionId: text("match_transaction_id").references(() => transactions.id),
     /** merged: the line was the bank's copy of a transaction already in the book (match_transaction_id). */
     decision: text("decision", { enum: ["pending", "auto", "accepted", "rejected", "merged"] }).notNull().default("pending"),

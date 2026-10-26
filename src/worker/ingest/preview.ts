@@ -9,7 +9,7 @@ import PostalMime, { type Email } from "postal-mime";
 import { schema, type Db } from "../db";
 import type { AppEnv } from "../env";
 import { looksLikeForwarder, pickSender, rankAccounts, senderCandidates, senderMatches } from "../lib/inbound";
-import { findParser, type ParsedLine } from "./parsers";
+import { findParser, type ParsedLine, type Unread } from "./parsers";
 import { plainText } from "./parsers/text";
 
 type Row = typeof schema.statementEmails.$inferSelect;
@@ -34,8 +34,13 @@ export type MailPreview = {
   /** The email's text, trimmed to a readable length. */
   text: string | null;
   truncated: boolean;
-  /** What the parser that would claim this email reads from it. */
-  reading: { parserKey: string | null; lines: { kind: "out" | "in"; amountMinor: number; date: string; description: string; rawText: string; confidence: number }[] };
+  /** What the parser that would claim this email reads from it; when nothing, why, and what it did find. */
+  reading: {
+    parserKey: string | null;
+    lines: { kind: "out" | "in"; amountMinor: number; date: string; description: string; rawText: string; confidence: number }[];
+    why: string | null;
+    guess: Unread["guess"] | null;
+  };
   /** Accounts that can take statements, best guess first. */
   accounts: { id: string; name: string; type: string; senders: string[]; level: number; reason: string | null }[];
   /** Why it waits: its sender is on no account's list, or it is on one and only a forwarder hid it. */
@@ -110,7 +115,7 @@ export async function buildPreview(env: AppEnv, db: Db, row: Row): Promise<MailP
       attachments: stored,
       text: null,
       truncated: false,
-      reading: { parserKey: null, lines: [] },
+      reading: { parserKey: null, lines: [], why: null, guess: null },
       accounts: ranked.map((r) => toAccount(accounts.find((a) => a.id === r.id)!, r)),
       held: row.status === "quarantined" ? "new-sender" : null,
       missing: true,
@@ -126,15 +131,32 @@ export async function buildPreview(env: AppEnv, db: Db, row: Row): Promise<MailP
   const forwardedVia = looksLikeForwarder(row.fromAddress) ? providerOf(row.fromAddress.slice(row.fromAddress.indexOf("@") + 1)) : xff ? "automatic forwarding" : null;
 
   // What the parser that would claim it reads (bank-specific first, then the generic alert reader).
-  let reading: MailPreview["reading"] = { parserKey: null, lines: [] };
+  let reading: MailPreview["reading"] = { parserKey: null, lines: [], why: null, guess: null };
   const parser = findParser({ from: sender ?? row.fromAddress, subject: email.subject ?? row.subject ?? "" });
   if (parser) {
     try {
       const lines: ParsedLine[] = await parser.parse(email, []);
-      reading = { parserKey: parser.key, lines: lines.slice(0, 5).map((l) => ({ kind: l.kind, amountMinor: Math.abs(l.amountMinor), date: l.date, description: l.description, rawText: l.rawText, confidence: l.confidence })) };
+      const unread = lines.length ? null : (parser.explain?.(email) ?? null);
+      reading = {
+        parserKey: parser.key,
+        lines: lines.slice(0, 5).map((l) => ({ kind: l.kind, amountMinor: Math.abs(l.amountMinor), date: l.date, description: l.description, rawText: l.rawText, confidence: l.confidence })),
+        why: unread?.why ?? null,
+        guess: unread?.guess ?? null,
+      };
     } catch {
-      reading = { parserKey: parser.key, lines: [] };
+      reading = { parserKey: parser.key, lines: [], why: null, guess: null };
     }
+  }
+
+  // Read by the AI or filled in by hand: what was read is the lines stored for it.
+  if (!reading.lines.length && (row.parserKey === "ai" || row.parserKey === "by-hand")) {
+    const stored = await db.query.importLines.findMany({ where: eq(schema.importLines.statementEmailId, row.id), limit: 5 });
+    reading = {
+      parserKey: row.parserKey,
+      lines: stored.map((l) => ({ kind: (l.parsedAmountMinor ?? 0) < 0 ? "out" : "in", amountMinor: Math.abs(l.parsedAmountMinor ?? 0), date: l.parsedDate ?? "", description: l.parsedDescription ?? "", rawText: l.rawText, confidence: l.confidence })),
+      why: null,
+      guess: null,
+    };
   }
 
   const hints = `${fromHeader?.name ?? ""} ${email.subject ?? ""}`;

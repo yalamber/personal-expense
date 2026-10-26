@@ -17,7 +17,7 @@ export const SETTINGS_MENU: { group: string; items: { id: SettingsSection; title
   {
     group: "Household",
     items: [
-      { id: "household", title: "Household", text: "Payday, your data, signing out" },
+      { id: "household", title: "Household", text: "Payday, AI help, your data, signing out" },
       { id: "people", title: "People", text: "Who can see and log money, and who can only look" },
     ],
   },
@@ -124,6 +124,8 @@ export function SettingsLayout({ household, section, narrow, children }: { house
 export function HouseholdSettings({ household, onLogout, onChanged }: { household: Household; onLogout: () => void; onChanged: () => void }) {
   const isAdmin = household.me.role === "admin";
   const [payDay, setPayDay] = useState(household.monthStartDay);
+  const [aiOn, setAiOn] = useState(household.aiEnabled !== false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { from, to } = monthRange(todayIn(household.timezone).slice(0, 7));
@@ -137,6 +139,19 @@ export function HouseholdSettings({ household, onLogout, onChanged }: { househol
       onChanged();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save");
+    }
+  }
+
+  async function saveAi(on: boolean) {
+    setAiOn(on);
+    setAiNote(null);
+    try {
+      await api.updateHousehold(household.id, { aiEnabled: on });
+      setAiNote(on ? "AI help is on." : "AI help is off. Emails are read by the built-in readers alone.");
+      onChanged();
+    } catch (e) {
+      setAiOn(!on);
+      setAiNote(e instanceof ApiError ? e.message : "Could not save");
     }
   }
 
@@ -164,6 +179,19 @@ export function HouseholdSettings({ household, onLogout, onChanged }: { househol
         <span className="small muted">Today's "a day" number counts the days until then.{isAdmin ? "" : " Only an admin can change it."}</span>
         {notice && <div className="ok">{notice}</div>}
         {error && <div className="error">{error}</div>}
+      </section>
+      <section className="card stack" aria-labelledby="ai-h">
+        <h2 id="ai-h">AI help</h2>
+        <label className="check">
+          <input type="checkbox" checked={aiOn} disabled={!isAdmin || household.aiAvailable === false} onChange={(e) => saveAi(e.target.checked)} />
+          <span>Read bank emails the app's own readers can't, and suggest a category for new payments</span>
+        </label>
+        <span className="small muted">
+          The email's text goes to an AI model on Cloudflare, where the app already runs; Cloudflare keeps no copy and does not train on it. Every payment it reads, and every category it
+          suggests, waits in Decide for you to check. Once you file a name, the app remembers it without asking the AI again.
+          {household.aiAvailable === false ? " This copy of the app has no AI set up." : isAdmin ? "" : " Only an admin can change it."}
+        </span>
+        {aiNote && <div className="ok">{aiNote}</div>}
       </section>
       <section className="card stack" aria-labelledby="data-h">
         <h2 id="data-h">Your data</h2>

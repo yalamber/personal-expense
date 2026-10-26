@@ -186,7 +186,7 @@ ok(st.status === "done" && /not a statement/.test(st.error), "and can be set asi
 t2 = (await call("GET", `${H}/today`, null, 200)).data;
 ok(t2.mail.newSender === 0, "nothing from a new sender is left");
 st = await deliver("postmaster@mail-x.google.com", mail("Nabil Bank <txn-alert@nabilbank.com>", "Transaction Alert", "Your one time password is 482913. Do not share it."));
-ok(st.status === "unparsed" && /nothing in this email read like a transaction/.test(st.error), "an email with no transaction in it says so instead of failing");
+ok(st.status === "unparsed" && /No amount in it/.test(st.error), `an email with no transaction in it says why instead of failing (${st.error})`);
 const otp = st.id;
 ok((await call("POST", `${H}/statements/${otp}/reread`, null, 200)).data.ok, "an unread email can be read again");
 await sleep(1200);
@@ -202,6 +202,40 @@ st = await deliver("postmaster@mail-wr1-x436.google.com", table);
 ok(st.status === "review" && st.parserKey === "alert-text", "a table-style alert is read");
 review = (await call("GET", `${H}/review`, null, 200)).data;
 ok(review.some((l) => Math.abs(l.amountMinor) === 275000 && /NTC TOPUP/.test(l.description ?? "")), "and its Rs 2,750 to NTC TOPUP waits for a person");
+
+// The same alert as a real template sends it: indented source, layout tables, a Dr marker.
+const indented = ["From: Nabil Bank <txn-alert@nabilbank.com>", `To: stmt+${token}@statements.leadbase.stream`, "Subject: Transaction Alert", `Date: ${new Date().toUTCString()}`, "Message-ID: <indented-1@e2e.example>", "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "",
+  `<html>\n <body>\n  <table width="100%">\n   <tr>\n    <td>\n     <table>\n      <tr>\n       <td>\n         Transaction Amount\n       </td>\n       <td>\n         NPR 3,100.00\n       </td>\n      </tr>\n      <tr>\n       <td>\n         Dr/Cr\n       </td>\n       <td>\n         DR\n       </td>\n      </tr>\n      <tr>\n       <td>Remarks</td>\n       <td>\n         NEA BILL 0425\n       </td>\n      </tr>\n     </table>\n    </td>\n   </tr>\n  </table>\n  <p>If you have received this email in error, please delete it.</p>\n </body>\n</html>`].join("\r\n");
+st = await deliver("postmaster@mail-wr1-x436.google.com", indented);
+ok(st.status === "review", `an indented table template is read (${st.status}: ${st.error ?? ""})`);
+review = (await call("GET", `${H}/review`, null, 200)).data;
+ok(review.some((l) => l.amountMinor === -310000 && /NEA BILL/.test(l.description ?? "")), "as Rs 3,100 out to NEA BILL, not as money in from the footer's 'received'");
+
+// An email the readers cannot place can be filled in by hand, and goes through the same checks.
+const vague = ["From: Nabil Bank <txn-alert@nabilbank.com>", `To: stmt+${token}@statements.leadbase.stream`, "Subject: Transaction Alert", `Date: ${new Date().toUTCString()}`, "Message-ID: <vague-1@e2e.example>", "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "",
+  "Dear Customer, fund transfer of NPR 7,500.00 to RAM BAHADUR, ref 991 on 25/10/2026."].join("\r\n");
+st = await deliver("postmaster@mail-wr1-x436.google.com", vague);
+ok(st.status === "unparsed" && /7,500\.00.*went out or came in/.test(st.error), `an alert without a direction says what it found (${st.error})`);
+pv = (await call("GET", `${H}/statements/${st.id}/preview`, null, 200)).data;
+ok(pv.reading.guess?.amountMinor === 750000 && pv.reading.guess?.date === "2026-10-25", "and the preview offers the amount and date it found");
+ok((await call("POST", `${H}/statements/${st.id}/lines`, { amount: "7,500", date: "2026-10-25", description: "Ram Bahadur" })).status === 400, "filling in needs a direction");
+const filled = (await call("POST", `${H}/statements/${st.id}/lines`, { amount: "7,500", direction: "out", date: "2026-10-25", description: "Ram Bahadur" }, 201)).data;
+ok(filled.total === 1 && filled.needsReview === 1, "a line filled in by hand waits in Decide for a category");
+st = (await call("GET", `${H}/statements`, null, 200)).data.find((x) => x.id === st.id);
+ok(st.status === "review" && st.parserKey === "by-hand", "and the email is marked as filled in by hand");
+pv = (await call("GET", `${H}/statements/${st.id}/preview`, null, 200)).data;
+ok(pv.reading.parserKey === "by-hand" && pv.reading.lines[0]?.amountMinor === 750000 && pv.reading.lines[0]?.kind === "out", "its preview shows the line as filled in");
+ok((await call("POST", `${H}/statements/${st.id}/lines`, { amount: "7,500", direction: "out", date: "2026-10-25" })).status === 409, "an email is filled in once");
+
+// AI help: on by default, can be turned off by an admin. Locally the AI cannot be reached, so the
+// readers above said nothing about what the AI found.
+let house = (await call("GET", H, null, 200)).data;
+ok(house.aiEnabled === true && typeof house.aiAvailable === "boolean", "AI help is on by default");
+ok(!/AI reader/.test(st.error ?? "") && !(await call("GET", `${H}/statements`, null, 200)).data.some((x) => /AI reader found/.test(x.error ?? "")), "an AI that could not be asked is not reported as having found nothing");
+await call("PATCH", H, { aiEnabled: false }, 200);
+house = (await call("GET", H, null, 200)).data;
+ok(house.aiEnabled === false, "an admin can turn AI help off");
+await call("PATCH", H, { aiEnabled: true }, 200);
 
 console.log(`\nAll good. Household ${hh}`);
 console.log(JSON.stringify({ hh, cookie: state.cookie }));

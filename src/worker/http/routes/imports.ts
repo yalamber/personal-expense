@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { parseCsv } from "../../../shared/csv";
 import { applyMapping, isCsvMapping, type CsvMapping } from "../../../shared/csv-mapping";
+import { aiFor } from "../../ai";
+import { aiCategorizePending } from "../../ai/categorize";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
 import { ingestLines, refreshStatementStatus } from "../../ingest/pipeline";
@@ -81,6 +83,8 @@ importRoutes.post("/accounts/:accountId/import-csv", requireWriter, async (c) =>
     rows.map((r) => ({ rawText: r.raw, date: r.date, amountMinor: r.amountMinor, direction: r.direction, description: r.description, confidence: 95 })),
   );
   await refreshStatementStatus(db, statementId, "parsed");
+  // Lines with no remembered category get the AI's guess, after the reply: a long file takes a few calls.
+  if (result.needsReview) c.executionCtx.waitUntil(aiCategorizePending(db, aiFor(c.env, household), household, statementId).catch((err) => console.warn("[ai] categories", err)));
   return c.json({ statementId, ...result, skipped: errors.length, errors: errors.slice(0, 20) }, 201);
 });
 
@@ -101,6 +105,7 @@ importRoutes.get("/review", async (c) => {
       description: schema.importLines.parsedDescription,
       confidence: schema.importLines.confidence,
       suggestedCategoryId: schema.importLines.suggestedCategoryId,
+      suggestedBy: schema.importLines.suggestedBy,
       matchTransactionId: schema.importLines.matchTransactionId,
       source: schema.statementEmails.subject,
       sourceFrom: schema.statementEmails.fromAddress,
@@ -125,11 +130,15 @@ importRoutes.get("/review", async (c) => {
   // Suggestions come from current merchant memory, so filing one line updates every similar line.
   const merchants = await loadMerchantIndex(db, householdId);
   return c.json(
-    lines.map((l) => ({
-      ...l,
-      suggestedCategoryId: merchants.get(normalizeMerchant(l.description ?? "").key)?.defaultCategoryId ?? l.suggestedCategoryId,
-      possibleDuplicate: l.matchTransactionId ? byId.get(l.matchTransactionId) ?? null : null,
-    })),
+    lines.map((l) => {
+      const remembered = merchants.get(normalizeMerchant(l.description ?? "").key)?.defaultCategoryId ?? null;
+      return {
+        ...l,
+        suggestedCategoryId: remembered ?? l.suggestedCategoryId,
+        suggestedBy: remembered ? null : l.suggestedBy,
+        possibleDuplicate: l.matchTransactionId ? byId.get(l.matchTransactionId) ?? null : null,
+      };
+    }),
   );
 });
 

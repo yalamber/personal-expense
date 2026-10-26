@@ -63,6 +63,10 @@ export type Household = {
   typicalIncomeMinor: number | null;
   typicalSpendMinor: number | null;
   inboundAddress: string;
+  /** The family lets Workers AI read emails and suggest categories (missing in copies saved before it existed). */
+  aiEnabled?: boolean;
+  /** This deployment has Workers AI at all. */
+  aiAvailable?: boolean;
   me: { id: string; role: Role; name: string };
 };
 
@@ -267,7 +271,13 @@ export type MailPreview = {
   attachments: { filename: string; mimeType: string; size: number }[];
   text: string | null;
   truncated: boolean;
-  reading: { parserKey: string | null; lines: { kind: "out" | "in"; amountMinor: number; date: string; description: string; rawText: string; confidence: number }[] };
+  reading: {
+    parserKey: string | null;
+    lines: { kind: "out" | "in"; amountMinor: number; date: string; description: string; rawText: string; confidence: number }[];
+    /** When nothing was read: why, and what was found (older saved copies lack these). */
+    why?: string | null;
+    guess?: { amountMinor: number | null; kind: "out" | "in" | null; date: string | null; description: string | null } | null;
+  };
   accounts: { id: string; name: string; type: AccountType; senders: string[]; level: number; reason: string | null }[];
   held: "new-sender" | "forwarded" | null;
   missing: boolean;
@@ -282,6 +292,7 @@ export type ReviewLine = {
   description: string | null;
   confidence: number;
   suggestedCategoryId: string | null;
+  suggestedBy?: "ai" | null;
   matchTransactionId: string | null;
   source: string | null;
   sourceFrom: string;
@@ -424,7 +435,7 @@ export type DecideCard =
       asOf: string;
       suspects: { id: string; date: string; amountMinor: number; direction: string; name: string | null; byName: string | null }[];
     }
-  | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null }
+  | { kind: "category"; key: string; lineIds: string[]; description: string; count: number; totalMinor: number; firstDate: string | null; lastDate: string | null; accountName: string | null; suggestedCategoryId: string | null; suggestedBy?: "memory" | "ai" | null }
   | { kind: "plan"; key: string; goalId: string; goalName: string; suggestMinor: number; fromMonth: string | null; toMonth: string | null; wantedBy: string | null; onTime: boolean; spareMinor: number }
   | {
       kind: "maturity";
@@ -548,6 +559,8 @@ export const api = {
     request<{ ok: true; remembered: boolean; sender: string | null }>("POST", `${h(id)}/statements/${statementId}/release`, { accountId, remember }),
   statementPreview: (id: string, statementId: string) => request<MailPreview>("GET", `${h(id)}/statements/${statementId}/preview`),
   rereadStatement: (id: string, statementId: string) => request<{ ok: true }>("POST", `${h(id)}/statements/${statementId}/reread`),
+  fillStatement: (id: string, statementId: string, body: { amount: string; direction: "out" | "in"; date: string; description: string }) =>
+    request<{ total: number; autoPosted: number; confirmed: number; needsReview: number; duplicates: number; alreadyQueued: number }>("POST", `${h(id)}/statements/${statementId}/lines`, body),
   rawStatementUrl: (id: string, statementId: string) => `${h(id)}/statements/${statementId}/raw`,
 
   review: (id: string) => request<ReviewLine[]>("GET", `${h(id)}/review`),
@@ -561,7 +574,7 @@ export const api = {
   acceptSuggested: (id: string) => request<{ accepted: number }>("POST", `${h(id)}/review/accept-suggested`),
   acceptMany: (id: string, lineIds: string[], categoryId: string | null) => request<{ accepted: number }>("POST", `${h(id)}/review/accept-many`, { lineIds, categoryId }),
 
-  updateHousehold: (id: string, body: { name?: string; payDay?: number; typicalIncome?: string; typicalSpend?: string }) => request<{ ok: true }>("PATCH", h(id), body),
+  updateHousehold: (id: string, body: { name?: string; payDay?: number; typicalIncome?: string; typicalSpend?: string; aiEnabled?: boolean }) => request<{ ok: true }>("PATCH", h(id), body),
   today: (id: string) => request<Today>("GET", `${h(id)}/today`),
   decideCards: (id: string) => request<DecideCard[]>("GET", `${h(id)}/decide`),
   snooze: (id: string, key: string, title: string) => request<{ ok: true; until: string }>("POST", `${h(id)}/decide/snooze`, { key, title }),

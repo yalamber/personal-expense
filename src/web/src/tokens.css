@@ -2183,3 +2183,21 @@ dl.terms dd {
   flex: 1 1 260px;
   min-width: 0;
 }
+
+/* ---- Filling in an email the app could not read ------------------------------ */
+
+.fill-by-hand {
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.ai-guess {
+  color: var(--ink-soft);
+}
+.ai-guess::before {
+  content: "AI · ";
+  font-weight: 600;
+  color: var(--green-deep);
+}

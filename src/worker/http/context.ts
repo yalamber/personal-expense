@@ -19,6 +19,7 @@ export type Variables = {
     inboundToken: string;
     typicalIncomeMinor: number | null;
     typicalSpendMinor: number | null;
+    aiEnabled: boolean;
   };
   member: { id: string; role: MemberRole; name: string };
 };

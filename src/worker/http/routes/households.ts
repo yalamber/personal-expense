@@ -5,7 +5,10 @@ import { schema } from "../../db";
 import { dispatchParse } from "../../ingest/dispatch";
 import { ensureCategories } from "../../ledger/categories";
 import { inboundAddressFor, senderMatches } from "../../lib/inbound";
+import { aiFor } from "../../ai";
+import { aiCategorizePending } from "../../ai/categorize";
 import { buildPreview, loadRaw, realSender } from "../../ingest/preview";
+import { ingestLines, refreshStatementStatus } from "../../ingest/pipeline";
 import { newId, nowIso, randomToken } from "../../lib/ids";
 import type { HonoEnv } from "../context";
 import { idempotent, readJson, requireAdmin, requireHousehold, requireUser, requireWriter } from "../context";
@@ -79,18 +82,23 @@ scoped.get("/", async (c) => {
     typicalIncomeMinor: h.typicalIncomeMinor,
     typicalSpendMinor: h.typicalSpendMinor,
     inboundAddress: inboundAddressFor(c.env.INBOUND_LOCAL_PART, h.inboundToken, c.env.INBOUND_DOMAIN),
+    aiEnabled: h.aiEnabled,
+    // Whether this deployment has Workers AI at all (it does not in local development without a login).
+    aiAvailable: Boolean(aiFor(c.env, null)),
     me: c.get("member"),
   });
 });
 
 /**
- * Household settings: name, the day of the month salary arrives (it sets "days to payday"), and a
- * typical month's income and spending so the plan works before the book has history.
+ * Household settings: name, the day of the month salary arrives (it sets "days to payday"), a
+ * typical month's income and spending so the plan works before the book has history, and whether
+ * Workers AI may read emails and suggest categories.
  */
 scoped.patch("/", requireWriter, async (c) => {
-  const body = await readJson<{ name?: string; payDay?: number; typicalIncome?: string; typicalSpend?: string }>(c);
+  const body = await readJson<{ name?: string; payDay?: number; typicalIncome?: string; typicalSpend?: string; aiEnabled?: boolean }>(c);
   const isAdmin = c.get("member").role === "admin";
   const patch: Partial<typeof schema.households.$inferInsert> = {};
+  if (isAdmin && typeof body.aiEnabled === "boolean") patch.aiEnabled = body.aiEnabled;
   if (isAdmin && typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim().slice(0, 80);
   if (isAdmin && typeof body.payDay === "number" && body.payDay >= 1 && body.payDay <= 28) patch.monthStartDay = Math.round(body.payDay);
   for (const [key, column] of [["typicalIncome", "typicalIncomeMinor"], ["typicalSpend", "typicalSpendMinor"]] as const) {
@@ -231,6 +239,34 @@ scoped.post("/statements/:statementId/reread", requireWriter, async (c) => {
   await db.update(schema.statementEmails).set({ status: "received", error: null, parserKey: null, processedAt: null }).where(eq(schema.statementEmails.id, row.id));
   await dispatchParse(c.env, c.executionCtx, { kind: "parse-statement-email", statementEmailId: row.id, householdId: row.householdId });
   return c.json({ ok: true });
+});
+
+/**
+ * A person says what an email the app could not read is about. The line goes through the same
+ * checks as a read one: it confirms a matching entry already in the book, waits in Decide beside a
+ * possible double, or goes in under the category the name is remembered by.
+ */
+scoped.post("/statements/:statementId/lines", requireWriter, async (c) => {
+  const body = await readJson<{ date?: string; amount?: string; direction?: string; description?: string }>(c);
+  const db = c.get("db");
+  const household = c.get("household");
+  const row = await db.query.statementEmails.findFirst({ where: and(eq(schema.statementEmails.id, c.req.param("statementId")), eq(schema.statementEmails.householdId, household.id)) });
+  if (!row) return c.json({ error: "not found" }, 404);
+  if (row.status !== "unparsed" && row.status !== "failed") return c.json({ error: "only an email the app could not read is filled in by hand" }, 409);
+  if (!row.accountId) return c.json({ error: "link it to an account first" }, 409);
+  const amountMinor = parseAmountToMinor(body.amount ?? "", household.currency);
+  if (!amountMinor || amountMinor <= 0) return c.json({ error: "enter the amount" }, 400);
+  if (body.direction !== "out" && body.direction !== "in") return c.json({ error: "say whether the money went out or came in" }, 400);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(body.date ?? "") ? body.date! : null;
+  if (!date) return c.json({ error: "enter the date" }, 400);
+  const description = (body.description ?? "").trim().slice(0, 200) || (row.subject ?? "").trim() || "Bank email";
+  const result = await ingestLines(db, { householdId: household.id, statementEmailId: row.id, accountId: row.accountId, source: "email" }, [
+    { rawText: `Filled in by ${c.get("member").name} from the email`, date, amountMinor, direction: body.direction, description, confidence: 90 },
+  ]);
+  await db.update(schema.statementEmails).set({ parserKey: "by-hand", error: null }).where(eq(schema.statementEmails.id, row.id));
+  await aiCategorizePending(db, aiFor(c.env, household), household, row.id).catch((err) => console.warn("[ai] categories", err));
+  await refreshStatementStatus(db, row.id, "parsed");
+  return c.json(result, 201);
 });
 
 /** Admin only: the raw message as it arrived (.eml), for a look or to send in as a parser sample. */

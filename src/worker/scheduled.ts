@@ -6,10 +6,13 @@
  *     restarted mid-job); an email that fails again is marked `failed` so it is not retried forever
  *  2. enforces raw-mail retention: raw .eml files older than the window are deleted from R2,
  *     while the parsed rows and import lines stay
+ *  3. asks Workers AI for a category for lines still waiting without one (households with AI on)
  */
 import { and, eq, isNotNull, lt } from "drizzle-orm";
 import { getDb, schema } from "./db";
 import type { AppEnv } from "./env";
+import { aiFor } from "./ai";
+import { aiCategorizePending } from "./ai/categorize";
 import { processStatementEmail } from "./ingest/consumer";
 import { nowIso } from "./lib/ids";
 
@@ -18,6 +21,7 @@ const STUCK_AFTER_MINUTES = 10;
 export async function handleScheduled(env: AppEnv): Promise<void> {
   await retryStuckStatements(env);
   await enforceRawMailRetention(env);
+  await suggestWaitingCategories(env);
   await forgetOldIdempotencyKeys(env);
 }
 
@@ -25,6 +29,16 @@ export async function handleScheduled(env: AppEnv): Promise<void> {
 async function forgetOldIdempotencyKeys(env: AppEnv): Promise<void> {
   const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
   await getDb(env.DB).delete(schema.idempotencyKeys).where(lt(schema.idempotencyKeys.createdAt, cutoff));
+}
+
+/** Lines that came in before AI was on, or whose call failed, get their suggestion overnight. */
+async function suggestWaitingCategories(env: AppEnv): Promise<void> {
+  const db = getDb(env.DB);
+  const households = await db.query.households.findMany({ where: eq(schema.households.aiEnabled, true), columns: { id: true, currency: true, aiEnabled: true } });
+  for (const h of households) {
+    const placed = await aiCategorizePending(db, aiFor(env, h), h).catch(() => 0);
+    if (placed) console.log(`[cron] AI suggested ${placed} categories for ${h.id}`);
+  }
 }
 
 async function retryStuckStatements(env: AppEnv): Promise<void> {
