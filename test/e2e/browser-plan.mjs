@@ -61,6 +61,45 @@ for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["ph
   await ctx.close();
 }
 
+// A copy of the plan saved by an older version (no money moments, no loans on goals) is what the
+// phone paints first after an update. The page must draw from it, then from the fresh copy.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await ctx.addCookies(cookieFor(plan.cookie));
+  const page = await ctx.newPage();
+  const pageErrors = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  const planPath = `/api/households/${plan.hh}/plan`;
+  const todayPath = `/api/households/${plan.hh}/today`;
+  await page.goto(`${BASE}/h/${plan.hh}/plan`, { waitUntil: "networkidle" });
+  const fresh = await (await page.request.get(`${BASE}${planPath}`)).json();
+  const freshToday = await (await page.request.get(`${BASE}${todayPath}`)).json();
+  const old = { ...fresh, goals: fresh.goals.map(({ loan, ...g }) => g) };
+  delete old.events;
+  const oldToday = { ...freshToday };
+  for (const k of ["period", "savedOtherMinor", "expectedLaterMinor", "comingUp", "mail", "mode"]) delete oldToday[k];
+  await page.evaluate(async ([p, body, t, tb]) => {
+    const c = await caches.open("api-v1");
+    await c.put(p, new Response(JSON.stringify(body), { headers: { "content-type": "application/json", "x-cached-at": new Date().toISOString() } }));
+    await c.put(t, new Response(JSON.stringify(tb), { headers: { "content-type": "application/json", "x-cached-at": new Date().toISOString() } }));
+  }, [planPath, old, todayPath, oldToday]);
+  // The network is slow, so the saved copy paints first.
+  await page.route(/\/api\/households\/[^/]+\/(plan|today)$/, async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  for (const path of ["/plan", ""]) {
+    await page.goto(`${BASE}/h/${plan.hh}${path}`, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(600);
+    await page.waitForLoadState("networkidle");
+  }
+  await page.goto(`${BASE}/h/${plan.hh}/plan`, { waitUntil: "networkidle" });
+  await page.locator(".road").waitFor({ timeout: 10000 });
+  ok(pageErrors.length === 0, `an older saved copy of the plan and of Today draws without errors${pageErrors.length ? `: ${pageErrors[0]}` : ""}`);
+  ok((await page.locator("section[aria-labelledby='moments-h']").innerText()).includes("Dashain bonus"), "and the fresh copy follows with the money moments");
+  await ctx.close();
+}
+
 if (rich) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await ctx.addCookies(cookieFor(rich.cookie));

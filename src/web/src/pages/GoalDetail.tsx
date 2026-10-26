@@ -6,6 +6,7 @@ import { navigate, onLinkClick } from "../router";
 import { PageSkeleton } from "../skeleton";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 import { toPlanGoals } from "./Plan";
+import { normalizePlan } from "../compat";
 import { FundingCard, WaysCard, planOptions } from "./planKit";
 
 /** One goal: what it is made of, when each part's money is ready, and the money that went in. */
@@ -27,7 +28,7 @@ export function GoalDetail({ household, accounts, goalId, onChanged }: { househo
   const load = useCallback(async () => {
     try {
       const [p, h] = await Promise.all([api.plan(household.id), api.contributions(household.id, goalId)]);
-      setPlan(p);
+      setPlan(normalizePlan(p));
       setHistory(h);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the goal");

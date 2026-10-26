@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { paths, type Account, type Category, type DecideCard, type Goal, type Household, type Me, type Member } from "../api";
 import { useUpdate } from "../pwa";
+import { PageBoundary } from "../boundary";
 import { useQuery } from "../query";
 import { PageSkeleton } from "../skeleton";
 import { navigate, onLinkClick } from "../router";
@@ -138,6 +139,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
       )}
 
       <main className="app">
+        <PageBoundary key={sub} onReset={changed}>
         {error && <div className="error">{error}</div>}
         {!household && !error && <PageSkeleton kind={space} />}
         {household && space === "today" && (
@@ -162,6 +164,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
         )}
         {household && sub === "/khata" && <Khata household={household} version={version} onChanged={changed} />}
         {household && contactMatch && <KhataPage household={household} contactId={contactMatch[1]!} categories={categories} version={version} onChanged={changed} />}
+        </PageBoundary>
       </main>
 
       <nav className="tabbar" aria-label="Main">

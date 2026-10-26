@@ -10,6 +10,7 @@ import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Pending } from "./Pending";
 import { dueLine } from "./termsKit";
+import { normalizeToday } from "../compat";
 import { CategorySelect, Checks, Icon, MonthSwitcher, amountInput, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
 
 /** Accounts that get bank statements; deposits, loans and money lent are kept by the family. */
@@ -39,7 +40,7 @@ export function Today({
   const cur = household.currency;
   const canWrite = household.me.role !== "viewer";
   const tq = useQuery<TodayData>(paths.today(household.id), [version]);
-  const data = tq.data ?? null;
+  const data = useMemo(() => (tq.data ? normalizeToday(tq.data) : null), [tq.data]);
   const monthKey = month ?? data?.month ?? null;
   const xq = useQuery<Transaction[]>(monthKey ? paths.transactions(household.id, monthKey) : null, [version]);
   const txs = xq.data ?? null;

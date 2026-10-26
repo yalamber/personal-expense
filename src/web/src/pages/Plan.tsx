@@ -10,6 +10,7 @@ import { onLinkClick } from "../router";
 import { Icon, amountInput, formatMoney, shortDate } from "../ui";
 import { Lines, Meter, SERIES, Stacked, compact } from "../charts";
 import { MomentsCard, wholeMoney } from "./planKit";
+import { normalizePlan } from "../compat";
 
 export function toPlanGoals(goals: Goal[]): PlanGoal[] {
   return goals
@@ -41,7 +42,7 @@ const KIND_ICON = { safety: Icon.safety, purchase: Icon.purchase, build: Icon.bu
 export function Plan({ household, version, onChanged }: { household: Household; version: number; onChanged: () => void }) {
   const pq = useQuery<PlanData>(paths.plan(household.id), [version]);
   const aq = useQuery<Account[]>(paths.accounts(household.id), [version]);
-  const data = pq.data ?? null;
+  const data = useMemo(() => (pq.data ? normalizePlan(pq.data) : null), [pq.data]);
   const accounts = useMemo(() => (aq.data ?? []).filter((x) => !x.closedAt), [aq.data]);
   const [withReleases, setWithReleases] = useState(true);
   const [pool, setPool] = useState<number | null>(null);
