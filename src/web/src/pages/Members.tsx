@@ -33,7 +33,7 @@ export function Members({ household }: { household: Household }) {
 
   return (
     <>
-      <h1>Members</h1>
+      <h1>People</h1>
       {error && <div className="error">{error}</div>}
       <div className="card table-scroll">
         <table>

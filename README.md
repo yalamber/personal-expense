@@ -15,24 +15,31 @@ the Email Worker storing forwarded mail in R2, the statement inbox, nightly hous
 
 The app has four spaces plus Settings, and Log on every screen:
 
-- **Today**: what the family can spend per day until payday and stay on plan, the book for the
-  month with ✓ (logged by the family) and ✓✓ (confirmed by the bank), envelopes (budgets), which
-  accounts the bank has confirmed, and the next goal.
+- **Today**: one figure, what a day can cost until payday, with the month under it as one bar
+  (spent, set aside for bills, goals and loans, left for everyday things) and the arithmetic a tap
+  away. Anything that needs the family sits in a strip beneath. Then the month day by day, the
+  book (✓ logged by the family, ✓✓ confirmed by the bank), and beside them what comes every month,
+  where the money went, what the family has (with the khata) and the next goal.
 - **Log**: money out, money in, or a move between accounts or into a goal. Repeats and merchant
   memory fill in the category and account. Before saving, anything that looks already in the
   book is shown, so the family says "same payment" or "a separate one".
 - **Decide**: one card at a time. Possible double entries, balance gaps against the bank,
   merchants that need a category (one choice files them all), a goal that could be funded from
   spare money, and Gmail forwarding codes.
-- **Plan**: goals funded in priority order, drawn as one road with a lever for the monthly amount
-  and a price-rise guess. Goals have parts (cost items, or stages for a build), wanted-by dates,
-  and money moved in from accounts.
+- **Plan**: the goals as cards in the order they are funded, each with how far along it is, when
+  its money is ready against the date wanted, and what goes into it each month. One lever, what
+  goes in each month, shows every goal's new date before anything is saved. Then the timeline of
+  what happens when (goals landing, loans paid off, money moments), the guesses that move the
+  dates (prices, pay rises, a paid-off installment) and the money moments. Goals have parts (cost
+  items, or stages for a build), wanted-by dates, money moved in from accounts, and a loan for
+  part of the price.
 - **Khata**: the family's tabs with shops, relatives and friends, one book per person, with what
   we owe and what we are owed at the top.
-- **Settings**: starting point, accounts, every month, envelopes, people, forwarding setup, inbox,
-  payday, CSV export.
+- **Settings**: six entries: household (payday, people, AI help, your data), accounts (with the
+  starting point), every month, envelopes, statements (the address, Gmail setup and the inbox)
+  and the app.
 
-**Day one, not month three.** The starting point (Settings › Starting point) takes what the family
+**Day one, not month three.** The starting point (Settings › Accounts › Starting point) takes what the family
 has and owes today, so balances, Today and the Plan are right from the first day:
 
 - **Accounts with a starting balance**: bank, savings, cash and wallets. A balance typed for today
@@ -107,7 +114,7 @@ hand, the quoted "From:" line, never only the envelope (Gmail rewrites that to a
 (the sender, who forwarded it and through which service, when it was sent), what the app can read
 from it, and the email's text. The accounts that take statements are listed with the likely one
 chosen and the reason (already reads this sender, same bank domain, or the bank's name in the
-sender), "remember this sender" on by default, and "Not a bank email". Settings › Inbox lists every
+sender), "remember this sender" on by default, and "Not a bank email". Settings › Statements lists every
 email and opens each to the same view. Without a bank-specific parser, the generic alert reader
 (`src/worker/ingest/parsers/alerts.ts`) reads sentences ("debited by NPR 1,500.00"), label lines
 and tables ("Transaction Type | Debit", "Amount (NPR) | 1,500.00", a header row over a row of
@@ -123,7 +130,7 @@ again by themselves the next time the app is opened. An unread email the readers
 what they found with "Yes, add it", "Change it" and "Not a payment". One still unread says why
 ("It has an amount, 7,500.00, but nothing saying whether that went out or came in") and can be
 filled in by hand from the Inbox, starting from what was found; the line goes through the same
-duplicate checks. Admins can download any email as `.eml` from Settings › Inbox; one sample per
+duplicate checks. Admins can download any email as `.eml` from Settings › Statements; one sample per
 bank is enough to write an exact parser.
 
 **AI help.** Lines merchant memory knows nothing about get a category suggestion from Workers AI
@@ -285,7 +292,7 @@ A zone has one catch-all and it only covers the apex domain; subdomains need the
 ### Forwarding from Gmail
 
 1. Gmail › Settings › See all settings › Forwarding and POP/IMAP › Add a forwarding address, and
-   paste the household's address from Settings › Statements by email.
+   paste the household's address from Settings › Statements.
 2. Gmail mails a confirmation code to that address. The Worker recognises it
    (`forwarding-noreply@google.com`), keeps the code, and shows it as the first card in Decide
    and on the forwarding page.
@@ -372,6 +379,6 @@ test/e2e/            End-to-end suites (API and browser) and the runner that sta
    - anything else fits (a bank line already there, two family entries): it waits in Decide
 5. Rows with a known category and nothing that fits are posted, already ✓✓. Everything else
    waits in Decide, where one choice files every row from that merchant.
-6. An account's starting balance (Settings › Starting point or Accounts) starts its book; later
+6. An account's starting balance (Settings › Accounts › Starting point or Accounts) starts its book; later
    figures are compared with the book, and a gap shows in Decide with the unconfirmed entries most
    likely to explain it.

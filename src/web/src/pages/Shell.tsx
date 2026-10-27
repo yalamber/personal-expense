@@ -11,7 +11,7 @@ import { Budgets } from "./Budgets";
 import { Khata, KhataPage } from "./Khata";
 import { Decide } from "./Decide";
 import { EveryMonth } from "./EveryMonth";
-import { AppSettings, Forwarding, HouseholdSettings, SettingsLayout, sectionOf, useNarrow } from "./Settings";
+import { AppSettings, HouseholdSettings, SettingsLayout, Statements, sectionOf, useNarrow } from "./Settings";
 import { GoalDetail } from "./GoalDetail";
 import { Inbox } from "./Inbox";
 import { Log } from "./Log";
@@ -23,7 +23,7 @@ import { StartingPoint } from "./StartingPoint";
 import { Today } from "./Today";
 
 /** Old addresses from the first version keep working. */
-const LEGACY: Record<string, string> = { "/review": "/decide", "/budgets": "/settings/envelopes", "/inbox": "/settings/inbox", "/accounts": "/settings/accounts", "/members": "/settings/people", "/settings/contacts": "/khata" };
+const LEGACY: Record<string, string> = { "/review": "/decide", "/budgets": "/settings/envelopes", "/inbox": "/settings/inbox", "/accounts": "/settings/accounts", "/members": "/settings/people", "/settings/contacts": "/khata", "/settings/forwarding": "/settings/statements" };
 
 type Space = "today" | "plan" | "khata" | "decide" | "settings";
 
@@ -157,7 +157,7 @@ export function Shell({ me, householdId, sub, onLogout }: { me: Me; householdId:
             {section === "accounts" && <Accounts household={household} version={version} onChanged={changed} />}
             {section === "every-month" && <EveryMonth household={household} accounts={accounts} categories={categories} version={version} onChanged={changed} />}
             {section === "envelopes" && <Budgets household={household} />}
-            {section === "forwarding" && <Forwarding household={household} />}
+            {section === "statements" && <Statements household={household} />}
             {section === "inbox" && <Inbox household={household} />}
             {section === "app" && <AppSettings />}
           </SettingsLayout>

@@ -47,8 +47,8 @@ export function SkCard({ title = true, lines = 3, rows = 0, chart = 0 }: { title
   );
 }
 
-/** The top of Today, Khata and a contact's page: an eyebrow, a two-line headline, the tally. */
-export function SkHero({ tally = 4 }: { tally?: number }) {
+/** The top of Today, Khata and a contact's page: an eyebrow, a two-line headline, the tally or the month bar. */
+export function SkHero({ tally = 4, bar = false }: { tally?: number; bar?: boolean }) {
   return (
     <section className="hero" aria-hidden="true">
       <div className="headline" style={{ gap: 12 }}>
@@ -56,6 +56,8 @@ export function SkHero({ tally = 4 }: { tally?: number }) {
         <Sk w="78%" h={34} r={8} />
         <Sk w="52%" h={34} r={8} />
         <Sk w={280} h={13} />
+        {bar && <Sk w="60%" h={14} r={4} style={{ maxWidth: 640 }} />}
+        {bar && <Sk w={220} h={11} />}
       </div>
       {tally > 0 && (
         <div className="ledger-sum" style={{ borderTopColor: "var(--line)" }}>
@@ -77,7 +79,7 @@ export function PageSkeleton({ kind }: { kind: PageKind }) {
   if (kind === "today") {
     return (
       <div className="stack" style={{ gap: 24 }} aria-busy="true" aria-label="Loading">
-        <SkHero />
+        <SkHero tally={0} bar />
         <div className="columns">
           <div className="main">
             <SkCard lines={0} chart={150} />
@@ -95,7 +97,24 @@ export function PageSkeleton({ kind }: { kind: PageKind }) {
   if (kind === "plan") {
     return (
       <div className="stack" style={{ gap: 24 }} aria-busy="true" aria-label="Loading">
-        <SkHero tally={0} />
+        <div className="stack" style={{ gap: 12 }} aria-hidden="true">
+          <Sk w={120} h={11} />
+          <Sk w={120} h={34} r={8} />
+          <Sk w="70%" h={13} />
+        </div>
+        <div className="goal-grid" aria-hidden="true">
+          {[0, 1].map((i) => (
+            <section key={i} className="card stack" style={{ gap: 10 }}>
+              <span className="row" style={{ gap: 10 }}>
+                <Sk w={34} h={34} r={999} />
+                <Sk w={140} h={16} />
+              </span>
+              <Sk w="55%" h={13} />
+              <Sk h={8} r={999} />
+              <SkLines n={2} />
+            </section>
+          ))}
+        </div>
         <section className="card" aria-hidden="true">
           <span className="row" style={{ gap: 10 }}>
             <Sk w={170} h={14} />
@@ -105,7 +124,6 @@ export function PageSkeleton({ kind }: { kind: PageKind }) {
           </span>
         </section>
         <SkCard title={false} rows={4} />
-        <SkCard lines={0} chart={200} />
       </div>
     );
   }

@@ -1242,6 +1242,12 @@ main.app {
   color: var(--green-deep);
   font-weight: 600;
 }
+.settings-nav a.child {
+  padding-left: 26px;
+  min-height: 36px;
+  font-size: 14px;
+  font-weight: 500;
+}
 .settings-body {
   display: flex;
   flex-direction: column;
@@ -1545,12 +1551,6 @@ a.khata-row:hover {
 
 /* ---- Plan -------------------------------------------------------------- */
 
-.lever {
-  display: flex;
-  gap: 14px 24px;
-  flex-wrap: wrap;
-  align-items: center;
-}
 .road {
   padding: 26px 24px 8px;
 }
@@ -2200,4 +2200,153 @@ dl.terms dd {
   content: "AI · ";
   font-weight: 600;
   color: var(--green-deep);
+}
+
+/* ---- Today: the figure, its verdict and the month bar ------------------ */
+
+.hero h1.figure {
+  font-size: clamp(36px, 6vw, 54px);
+  line-height: 1.05;
+}
+.verdict {
+  font-size: 18px;
+  color: var(--ink-soft);
+  max-width: 34em;
+}
+.month-bar {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.needs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---- Plan: goal cards, the lever, the guesses -------------------------- */
+
+.goal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.goal-card.late {
+  border-color: var(--marigold);
+}
+.goal-card .head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.goal-card .kind {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.goal-card.late .kind {
+  background: var(--marigold-soft);
+  color: var(--marigold-deep);
+}
+.goal-card h3 {
+  font-size: 18px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.goal-facts .pill {
+  vertical-align: 1px;
+}
+.goal-card h3 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+.goal-card h3 a:hover {
+  text-decoration: underline;
+}
+.goal-card .order {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+.goal-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 14px;
+}
+.goal-facts dt {
+  color: var(--muted);
+}
+.goal-facts dd {
+  margin: 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+.goal-facts dd.late {
+  color: var(--marigold-deep);
+  font-weight: 500;
+}
+.goal-card .ways {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--marigold-deep);
+  text-decoration: none;
+  margin-top: 2px;
+}
+.goal-card .ways:hover {
+  text-decoration: underline;
+}
+.lever-card .figure {
+  font-size: 30px;
+}
+.lever-card .diff {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 14px;
+  padding: 10px 14px;
+  background: var(--paper);
+  border-radius: 12px;
+}
+.lever-card .diff .name {
+  font-weight: 600;
+}
+.assume {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 14px 20px;
+  align-items: center;
+}
+.assume .label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+@media (max-width: 640px) {
+  .assume {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .assume .chips {
+    margin-bottom: 8px;
+  }
+  .lever-card .diff {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .lever-card .diff .name {
+    margin-top: 6px;
+  }
 }

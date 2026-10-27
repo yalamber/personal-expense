@@ -29,13 +29,29 @@ for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["ph
   ok(/Scooter: bought, Rs 1,50,000 borrowed|Scooter: bought, Rs 150,000 borrowed/.test(road), `${label}: the road shows the scooter bought with its loan`);
   ok(/Scooter loan repaid/.test(road), `${label}: and when that loan is repaid`);
   ok(/Dashain bonus/.test(road) && /Sister's wedding/.test(road), `${label}: money moments are on the road`);
-  ok((await page.locator("a.banner").filter({ hasText: "Ways to get Land there" }).count()) === 1, `${label}: a late goal offers ways to get there`);
+  const landCard = page.locator(".goal-card").filter({ hasText: "Land" }).first();
+  ok((await landCard.locator("a.ways").count()) === 1 && /late|out of reach/i.test(await landCard.innerText()), `${label}: the late goal says so on its card and offers ways to get there`);
+  ok((await page.locator(".goal-card").count()) >= 2 && /Money ready/.test(await landCard.innerText()), `${label}: each goal has a card with when its money is ready`);
   const moments = await page.locator("section[aria-labelledby='moments-h']").innerText();
   ok(/Dashain bonus/.test(moments) && /every/.test(moments) && /650,000|6,50,000/.test(moments), `${label}: the money moments card lists them`);
   ok(/If our income rises/.test(await page.locator("body").innerText()), `${label}: pay rises can be tried`);
   let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   ok(overflow <= 0, `${label}: the plan fits the screen`);
   await shot(page, `plan-${label}`, { fullPage: true });
+
+  // The lever: a bigger amount says what it does to each goal before anything is saved.
+  await page.locator(".lever-card .chip").nth(1).click();
+  await page.locator(".lever-card .diff").waitFor({ timeout: 5000 });
+  const diff = (await page.locator(".lever-card .diff").innerText()).replace(/\s+/g, " ");
+  ok(/sooner|within reach|no change/.test(diff) && /Land/.test(diff), `${label}: a bigger amount says what it does to each goal (${diff.slice(0, 100)})`);
+  ok((await page.getByRole("button", { name: /^Make .* a month our plan$/ }).count()) === 1, `${label}: and offers to make it the plan`);
+  const landAfter = await landCard.innerText();
+  ok(!/Dec 2041/.test(landAfter) || /sooner/.test(diff) === false, `${label}: the goal card shows the new date too`);
+  await page.locator(".lever-card").scrollIntoViewIfNeeded();
+  await shot(page, `plan-lever-${label}`, { fullPage: false });
+  await page.getByRole("button", { name: "Back to today's plan" }).click();
+  await page.waitForFunction(() => !document.querySelector(".lever-card .diff"), null, { timeout: 5000 });
+  ok(true, `${label}: and can go back to today's plan`);
 
   await page.goto(`${BASE}/h/${plan.hh}/plan/goals/${plan.land}`, { waitUntil: "networkidle" });
   await page.locator("#ways-h").waitFor({ timeout: 10000 });

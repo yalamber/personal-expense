@@ -3,8 +3,8 @@ import { addDays, monthRange } from "../../../shared/dates";
 import { daysBetween } from "../../../shared/deposit";
 import { lateLabel, monthName } from "../../../shared/plan";
 import { spendOf, summarize } from "../../../shared/summary";
-import { Bars, Lines, Meter, SERIES } from "../charts";
-import { api, ApiError, paths, type Account, type AccountType, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
+import { Bars, Lines, Meter, SERIES, Stacked } from "../charts";
+import { api, ApiError, paths, type Account, type Category, type Goal, type Household, type Today as TodayData, type Transaction } from "../api";
 import { useQuery } from "../query";
 import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
@@ -13,10 +13,11 @@ import { dueLine } from "./termsKit";
 import { normalizeToday } from "../compat";
 import { CategorySelect, Checks, Icon, MonthSwitcher, amountInput, categoryLabel, dayLabel, formatMoney, shortDate } from "../ui";
 
-/** Accounts that get bank statements; deposits, loans and money lent are kept by the family. */
-const STATEMENT_TYPES: AccountType[] = ["checking", "savings", "credit", "wallet"];
-
-/** Today: one number that connects tonight's dinner to the land date, then the book itself. */
+/**
+ * Today: one figure (what a day can cost until payday), the month under it as one bar, anything
+ * that needs the family, then the month day by day and the book, with what is coming up, where
+ * the money went, what the family has and the next goal beside them.
+ */
 export function Today({
   household,
   accounts,
@@ -62,9 +63,22 @@ export function Today({
 
   const weekday = new Date(`${data.today}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
   const nothingYet = data.mode === "nothing";
+  const waiting = data.mode === "waiting";
   const over = data.mode === "over";
   const base = `/h/${household.id}`;
   const goalName = (id: string | null) => goals.find((g) => g.id === id)?.name;
+  const setAside = data.goalsMinor + data.loansMinor + data.billsMinor + data.savedOtherMinor;
+  // The figure, and the sentence that says what it means.
+  const figure = nothingYet ? "Log this month's income" : waiting ? "Nothing in yet" : over ? `${formatMoney(-data.everydayLeftMinor, cur)} over` : `${formatMoney(data.perDayMinor, cur)} a day`;
+  const verdict = nothingYet
+    ? "When it comes in, the book says what a day can cost until payday."
+    : waiting
+      ? `${formatMoney(data.spentMinor + setAside, cur)} is spent or set aside already. The day figure appears once income is logged.`
+      : over
+        ? "Spent and set aside, this month has gone past what came in."
+        : data.mode === "unplanned"
+          ? "to spend on everyday things until payday, with nothing set aside yet."
+          : "to spend on everyday things until payday. The bills, the goals and the loans are already set aside.";
   // The month in pictures: spending by day against the pace, and where it went.
   const viewing = month ?? data.month;
   const isCurrent = viewing === data.month;
@@ -99,29 +113,48 @@ export function Today({
   const people = accounts.filter((a) => a.type === "person" && !a.closedAt);
   const weOwe = people.reduce((s, a) => s + Math.max(0, -a.balanceMinor), 0);
   const theyOwe = people.reduce((s, a) => s + Math.max(0, a.balanceMinor), 0);
+  const dues = people
+    .filter((a) => a.endDate && a.balanceMinor !== 0)
+    .sort((a, b) => a.endDate!.localeCompare(b.endDate!))
+    .slice(0, 2);
+  const statementsThrough = data.bank.map((b) => b.lastLineDate).filter((d): d is string => Boolean(d)).sort().pop() ?? null;
+  const incomeLabel = byPayday ? `since payday, ${shortDate(data.period.from)}` : "this month";
 
   return (
     <>
       <section className="hero" aria-label="This month at a glance">
         <div className="headline">
           <span className="eyebrow">
-            {weekday} · {data.daysLeft} {data.daysLeft === 1 ? "day" : "days"} to payday
+            {weekday} · {data.daysLeft} {data.daysLeft === 1 ? "day" : "days"} to payday ({shortDate(data.payday)})
           </span>
-          <h1>
-            {nothingYet
-              ? "Log this month's income when it comes in, and the book will tell you what a day can cost."
-              : data.mode === "waiting"
-                ? `Nothing has come in yet this month; ${formatMoney(data.spentMinor + data.goalsMinor + data.loansMinor + data.billsMinor, cur)} is spent or set aside.`
-                : over
-                  ? `This month is ${formatMoney(-data.everydayLeftMinor, cur)} past what came in.`
-                  : data.mode === "unplanned"
-                    ? `${formatMoney(data.perDayMinor, cur)} a day, with nothing set aside yet.`
-                    : `${formatMoney(data.perDayMinor, cur)} a day keeps everything on plan.`}
+          <h1 className={nothingYet || waiting ? undefined : "figure"} aria-live="polite">
+            {figure}
           </h1>
-          {data.expectedLaterMinor > 0 && (
-            <span className="small" style={{ color: "var(--ink-soft)" }}>
-              {formatMoney(data.expectedLaterMinor, cur)} more is expected this month under Every month. It counts once it is in the book.
-            </span>
+          <p className="verdict" style={{ margin: 0 }}>
+            {verdict}
+          </p>
+          {!nothingYet && !waiting && (
+            <div className="month-bar" aria-label="The month so far">
+              <span className="small" style={{ color: "var(--ink-soft)" }}>
+                <strong>{formatMoney(data.incomeMinor, cur)}</strong> came in {incomeLabel}
+                {data.expectedLaterMinor > 0 ? `; ${formatMoney(data.expectedLaterMinor, cur)} more is expected under Every month and counts once it is in the book` : ""}.
+              </span>
+              <Stacked
+                segments={
+                  over
+                    ? [
+                        { label: "Came in", value: data.incomeMinor, color: SERIES[0] },
+                        { label: "Over by", value: -data.everydayLeftMinor, color: "var(--rust)" },
+                      ]
+                    : [
+                        { label: "Spent so far", value: data.spentMinor, color: SERIES[2] },
+                        { label: "Set aside: goals, loans, bills", value: setAside, color: SERIES[1] },
+                        { label: "For everyday things", value: data.everydayLeftMinor, color: SERIES[0] },
+                      ]
+                }
+                format={(v) => formatMoney(v, cur, { symbol: false })}
+              />
+            </div>
           )}
           {data.mode === "unplanned" && canWrite && (
             <span className="small" style={{ color: "var(--ink-soft)" }}>
@@ -139,69 +172,54 @@ export function Today({
           {!nothingYet && <HowItWorks data={data} cur={cur} />}
           {data.bookMatchesThrough ? (
             <span className="trust">
-              <Checks confirmed /> The book matches the bank through {shortDate(data.bookMatchesThrough)}
+              <Checks confirmed /> <span>The book matches the bank through {shortDate(data.bookMatchesThrough)}</span>
             </span>
-          ) : data.bank.every((b) => !b.lastLineDate) ? (
+          ) : statementsThrough ? (
             <span className="trust">
-              <Checks confirmed={false} /> Everything here is logged by the family. Forward a bank email to have it double-checked.
+              <Checks confirmed /> <span>Bank statements read through {shortDate(statementsThrough)}</span>
             </span>
-          ) : null}
+          ) : (
+            <span className="trust">
+              <Checks confirmed={false} />{" "}
+              <span>
+                Everything here is logged by the family.{" "}
+                <a href={`${base}/settings/statements`} onClick={onLinkClick}>
+                  Forward a bank email
+                </a>{" "}
+                to have it double-checked.
+              </span>
+            </span>
+          )}
         </div>
-        <dl className="ledger-sum">
-          <div>
-            <dt>Came in</dt>
-            <dd className="amount-in">{formatMoney(data.incomeMinor, cur, { sign: true, symbol: false })}</dd>
-          </div>
-          <div>
-            <dt>Spent so far</dt>
-            <dd>{formatMoney(-data.spentMinor, cur, { symbol: false })}</dd>
-          </div>
-          <div>
-            <dt>To the goals</dt>
-            <dd>{formatMoney(data.goalsMinor, cur, { symbol: false })}</dd>
-          </div>
-          {data.loansMinor > 0 && (
-            <div>
-              <dt>Loan installments</dt>
-              <dd>{formatMoney(data.loansMinor, cur, { symbol: false })}</dd>
-            </div>
-          )}
-          {data.savedOtherMinor > 0 && (
-            <div>
-              <dt>Other saving</dt>
-              <dd>{formatMoney(data.savedOtherMinor, cur, { symbol: false })}</dd>
-            </div>
-          )}
-          {data.billsMinor > 0 && (
-            <div>
-              <dt>Bills to come</dt>
-              <dd>{formatMoney(data.billsMinor, cur, { symbol: false })}</dd>
-            </div>
-          )}
-          <div>
-            <dt>For everyday things</dt>
-            <dd style={{ color: over ? "var(--rust)" : undefined }}>{formatMoney(data.everydayLeftMinor, cur, { symbol: false })}</dd>
-          </div>
-        </dl>
       </section>
 
-      {data.needsStart && canWrite && (
-        <a className="banner" href={`/h/${household.id}/settings/start`} onClick={onLinkClick}>
-          <Icon.plus />
-          <span style={{ flex: "1 1 auto" }}>Start from today: add your balances, fixed deposits and loans, and the numbers are right from day one.</span>
-          <Icon.next />
-        </a>
-      )}
-
-      {data.decideCount > 0 && (
-        <a className="banner" href={`/h/${household.id}/decide`} onClick={onLinkClick}>
-          <span className="count">{data.decideCount}</span>
-          <span style={{ flex: "1 1 auto" }}>
-            {data.decideCount === 1 ? "decision waiting" : "decisions waiting"} · about {Math.max(1, Math.round(data.decideCount * 0.5))} {data.decideCount > 2 ? "minutes" : "minute"}
-          </span>
-          <Icon.next />
-        </a>
-      )}
+      {(data.needsStart && canWrite) || data.decideCount > 0 || data.mail.unread > 0 ? (
+        <div className="needs" aria-label="Needs you">
+          {data.needsStart && canWrite && (
+            <a className="banner" href={`${base}/settings/start`} onClick={onLinkClick}>
+              <Icon.plus />
+              <span style={{ flex: "1 1 auto" }}>Start from today: add your balances, fixed deposits and loans, and the numbers are right from day one.</span>
+              <Icon.next />
+            </a>
+          )}
+          {data.decideCount > 0 && (
+            <a className="banner" href={`${base}/decide`} onClick={onLinkClick}>
+              <span className="count">{data.decideCount}</span>
+              <span style={{ flex: "1 1 auto" }}>
+                {data.decideCount === 1 ? "decision waiting" : "decisions waiting"} · about {Math.max(1, Math.round(data.decideCount * 0.5))} {data.decideCount > 2 ? "minutes" : "minute"}
+              </span>
+              <Icon.next />
+            </a>
+          )}
+          {data.mail.unread > 0 && (
+            <a className="banner" href={`${base}/settings/inbox`} onClick={onLinkClick}>
+              <span className="count">{data.mail.unread}</span>
+              <span style={{ flex: "1 1 auto" }}>{data.mail.unread === 1 ? "email the app could not read; the inbox says why" : "emails the app could not read; the inbox says why"}</span>
+              <Icon.next />
+            </a>
+          )}
+        </div>
+      ) : null}
 
       <div className="columns">
         <div className="main">
@@ -291,51 +309,57 @@ export function Today({
         </div>
 
         <aside className="side">
-          {topRows.length > 0 && (
+          <ComingUp household={household} data={data} canWrite={canWrite} onChanged={onChanged} />
+
+          {(topRows.length > 0 || data.envelopes.length > 0) && (
             <section className="card stack" aria-labelledby="where-h">
               <div className="row between">
                 <h2 id="where-h">Where it went</h2>
-                <span className="small muted">{isCurrent ? "so far" : monthName(viewing)}</span>
+                <a className="small" href={`${base}/settings/envelopes`} onClick={onLinkClick}>
+                  {data.envelopes.length ? "Envelopes" : "Set envelopes"}
+                </a>
               </div>
-              <Bars rows={topRows} format={(v) => formatMoney(v, cur, { symbol: false })} />
+              {topRows.length > 0 ? <Bars rows={topRows} format={(v) => formatMoney(v, cur, { symbol: false })} /> : <span className="small muted">Nothing spent yet {incomeLabel}.</span>}
+              {data.envelopes.length > 0 && (
+                <div className="stack" style={{ gap: 6, paddingTop: 4 }}>
+                  <span className="small" style={{ fontWeight: 600 }}>
+                    Envelopes
+                  </span>
+                  {data.envelopes.map((e) => {
+                    const left = e.budgetMinor - e.spentMinor;
+                    return (
+                      <div key={e.categoryId} className="envelope">
+                        <div className="row between small" style={{ flexWrap: "nowrap" }}>
+                          <span style={{ fontWeight: 500 }}>{e.name}</span>
+                          <span className="mono" style={{ color: left < 0 ? "var(--rust)" : "var(--ink-soft)" }}>
+                            {left < 0 ? `over by ${formatMoney(-left, cur, { symbol: false })}` : `${formatMoney(left, cur, { symbol: false })} left`}
+                          </span>
+                        </div>
+                        <div className="track" aria-hidden="true">
+                          <div className={`fill ${left < 0 ? "over" : ""}`} style={{ width: `${Math.min(100, Math.max(0, (e.spentMinor / e.budgetMinor) * 100))}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           )}
-
-          <ComingUp household={household} data={data} canWrite={canWrite} onChanged={onChanged} />
-
-          <section className="card stack" aria-labelledby="env-h">
-            <div className="row between">
-              <h2 id="env-h">Envelopes</h2>
-              <a className="small" href={`/h/${household.id}/settings/envelopes`} onClick={onLinkClick}>
-                {data.envelopes.length ? "Change" : "Set them"}
-              </a>
-            </div>
-            {data.envelopes.length === 0 && <span className="small muted">Give a few categories a monthly amount, and they show here as envelopes filling up.</span>}
-            {data.envelopes.map((e) => {
-              const left = e.budgetMinor - e.spentMinor;
-              return (
-                <div key={e.categoryId} className="envelope">
-                  <div className="row between small" style={{ flexWrap: "nowrap" }}>
-                    <span style={{ fontWeight: 500 }}>{e.name}</span>
-                    <span className="mono" style={{ color: left < 0 ? "var(--rust)" : "var(--ink-soft)" }}>
-                      {left < 0 ? `over by ${formatMoney(-left, cur, { symbol: false })}` : `${formatMoney(left, cur, { symbol: false })} left`}
-                    </span>
-                  </div>
-                  <div className="track" aria-hidden="true">
-                    <div className={`fill ${left < 0 ? "over" : ""}`} style={{ width: `${Math.min(100, Math.max(0, (e.spentMinor / e.budgetMinor) * 100))}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </section>
 
           {!data.needsStart && (
             <section className="card stack" aria-labelledby="worth-h" style={{ gap: 6 }}>
               <div className="row between">
                 <h2 id="worth-h">What we have</h2>
-                <a className="small" href={`/h/${household.id}/settings/accounts`} onClick={onLinkClick}>
-                  Accounts
-                </a>
+                <span className="row" style={{ gap: 10 }}>
+                  <a className="small" href={`${base}/settings/accounts`} onClick={onLinkClick}>
+                    Accounts
+                  </a>
+                  {people.length > 0 && (
+                    <a className="small" href={`${base}/khata`} onClick={onLinkClick}>
+                      Khata
+                    </a>
+                  )}
+                </span>
               </div>
               <span className="display" style={{ fontSize: 26 }}>{formatMoney(data.worth.netMinor, cur)}</span>
               <div className="kv small">
@@ -354,90 +378,26 @@ export function Today({
                   <span className="mono amount-in">+{formatMoney(data.worth.accruedMinor, cur, { symbol: false })}</span>
                 </div>
               )}
-            </section>
-          )}
-
-          {people.length > 0 && (
-            <section className="card stack" aria-labelledby="khata-h" style={{ gap: 4 }}>
-              <div className="row between">
-                <h2 id="khata-h">Khata</h2>
-                <a className="small" href={`/h/${household.id}/khata`} onClick={onLinkClick}>
-                  All {people.length}
-                </a>
-              </div>
-              {weOwe > 0 && (
-                <div className="kv">
-                  <span className="muted">We owe</span>
-                  <span className="mono" style={{ color: "var(--rust)" }}>{formatMoney(weOwe, cur, { symbol: false })}</span>
-                </div>
-              )}
-              {theyOwe > 0 && (
-                <div className="kv">
-                  <span className="muted">Owed to us</span>
-                  <span className="mono amount-in">{formatMoney(theyOwe, cur, { symbol: false })}</span>
-                </div>
-              )}
-              {weOwe === 0 && theyOwe === 0 && <span className="small muted">All settled.</span>}
-              {weOwe > 0 && <span className="small muted">{people.filter((a) => a.balanceMinor < 0).sort((a, b) => a.balanceMinor - b.balanceMinor).slice(0, 3).map((a) => a.name).join(", ")}</span>}
-              {people
-                .filter((a) => a.endDate && a.balanceMinor !== 0)
-                .sort((a, b) => a.endDate!.localeCompare(b.endDate!))
-                .slice(0, 2)
-                .map((a) => {
-                  const due = dueLine(a, a.balanceMinor < 0 ? "owe" : "owed", data.today);
-                  return (
-                    <a key={a.id} className="small" href={`/h/${household.id}/khata/${a.id}`} onClick={onLinkClick} style={{ color: due?.late ? "var(--rust)" : "var(--marigold-deep)", textDecoration: "none" }}>
-                      {a.name}: {due?.text}
-                    </a>
-                  );
-                })}
-            </section>
-          )}
-
-          <section className="card" aria-labelledby="bank-h">
-            <h2 id="bank-h" style={{ marginBottom: 6 }}>The bank and the book</h2>
-            {accounts.length === 0 && <span className="small muted">No accounts yet.</span>}
-            {data.bank.filter((b) => STATEMENT_TYPES.includes(b.type)).map((b) => (
-              <div key={b.accountId} className="kv">
-                <span className="stack" style={{ gap: 0 }}>
-                  {b.name}
-                  <span className="small muted mono">
-                    {b.type === "credit" ? `${formatMoney(-b.balanceMinor, cur, { symbol: false })} owed` : formatMoney(b.balanceMinor, cur, { symbol: false })}
+              {(weOwe > 0 || theyOwe > 0) && (
+                <div className="kv small" style={{ borderTop: "1px dashed var(--line)", paddingTop: 8, marginTop: 2 }}>
+                  <span className="muted">Khata</span>
+                  <span className="mono">
+                    {weOwe > 0 && <span style={{ color: "var(--rust)" }}>we owe {formatMoney(weOwe, cur, { symbol: false })}</span>}
+                    {weOwe > 0 && theyOwe > 0 ? " · " : ""}
+                    {theyOwe > 0 && <span className="amount-in">owed to us {formatMoney(theyOwe, cur, { symbol: false })}</span>}
                   </span>
-                </span>
-                {b.questions > 0 ? (
-                  <a href={`/h/${household.id}/decide`} onClick={onLinkClick} style={{ fontWeight: 600, color: "var(--marigold-deep)" }}>
-                    Balance question
+                </div>
+              )}
+              {dues.map((a) => {
+                const due = dueLine(a, a.balanceMinor < 0 ? "owe" : "owed", data.today);
+                return (
+                  <a key={a.id} className="small" href={`${base}/khata/${a.id}`} onClick={onLinkClick} style={{ color: due?.late ? "var(--rust)" : "var(--marigold-deep)", textDecoration: "none" }}>
+                    {a.name}: {due?.text}
                   </a>
-                ) : b.lastLineDate ? (
-                  <span className="row small" style={{ gap: 6, color: "var(--green-deep)" }}>
-                    through {shortDate(b.lastLineDate)} <Checks confirmed />
-                  </span>
-                ) : (
-                  <span className="small muted">no statements yet</span>
-                )}
-              </div>
-            ))}
-            {(data.mail.newSender > 0 || data.mail.unread > 0) && (
-              <div className="kv">
-                <span className="stack" style={{ gap: 0 }}>
-                  {data.mail.newSender > 0
-                    ? `${data.mail.newSender} ${data.mail.newSender === 1 ? "email" : "emails"} from a new sender`
-                    : `${data.mail.unread} ${data.mail.unread === 1 ? "email" : "emails"} the app could not read`}
-                  <span className="small muted">{data.mail.newSender > 0 ? "Say which account it is about." : "The inbox says why."}</span>
-                </span>
-                <a href={`${base}/${data.mail.newSender > 0 ? "decide" : "settings/inbox"}`} onClick={onLinkClick} style={{ fontWeight: 600, color: "var(--marigold-deep)" }}>
-                  {data.mail.newSender > 0 ? "Decide" : "Inbox"}
-                </a>
-              </div>
-            )}
-            <p className="small muted" style={{ margin: "8px 0 0" }}>
-              Statements arrive by email and check themselves against the book. Only the odd ones ask for you.{" "}
-              <a href={`/h/${household.id}/settings/forwarding`} onClick={onLinkClick}>
-                Set up forwarding
-              </a>
-            </p>
-          </section>
+                );
+              })}
+            </section>
+          )}
 
           {data.nextGoal ? (
             <section className="card night stack" aria-labelledby="next-h" style={{ gap: 10 }}>
@@ -458,15 +418,15 @@ export function Today({
                   ? `At the current plan: ${lateLabel(data.nextGoal.outcome.lateMonths)}.`
                   : `${formatMoney(data.nextGoal.monthlyPlanMinor, cur)} a month goes in.`}
               </span>
-              <a href={`/h/${household.id}/plan`} onClick={onLinkClick} style={{ fontWeight: 600, fontSize: 14 }}>
-                The whole road
+              <a href={`${base}/plan`} onClick={onLinkClick} style={{ fontWeight: 600, fontSize: 14 }}>
+                The whole plan
               </a>
             </section>
           ) : (
             <section className="card night stack" style={{ gap: 10 }}>
               <h2 className="display" style={{ fontSize: 21 }}>What are you saving for?</h2>
               <span className="small muted">Land, a house, college, a cushion for bad months. Add one and see when it lands.</span>
-              <a href={`/h/${household.id}/plan/new`} onClick={onLinkClick} style={{ fontWeight: 600, fontSize: 14 }}>
+              <a href={`${base}/plan/new`} onClick={onLinkClick} style={{ fontWeight: 600, fontSize: 14 }}>
                 Add a goal
               </a>
             </section>
@@ -622,7 +582,7 @@ function BookRow({
   );
 }
 
-/** The arithmetic behind the headline, line by line, and where the income figure comes from. */
+/** The arithmetic behind the figure, line by line, and where the income figure comes from. */
 function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
   const n = (m: number) => formatMoney(m, cur, { symbol: false });
   const incomeLabel = data.period.from.slice(8) === "01" ? "Came in this month" : `Came in since payday (${shortDate(data.period.from)})`;
@@ -662,7 +622,7 @@ function HowItWorks({ data, cur }: { data: TodayData; cur: string }) {
         <span>{n(data.perDayMinor)} a day</span>
       </div>
       <span className="small muted">
-        Only income already in the book counts{data.expectedLaterMinor > 0 ? `; the ${formatMoney(data.expectedLaterMinor, cur)} still expected under Every month joins when it is logged` : ""}.         Goals count the larger of what is planned and what has moved this month. The day figure is rounded down to whole {cur === "NPR" || cur === "INR" ? "rupees" : "units"}.
+        Only income already in the book counts{data.expectedLaterMinor > 0 ? `; the ${formatMoney(data.expectedLaterMinor, cur)} still expected under Every month joins when it is logged` : ""}. Goals count the larger of what is planned and what has moved this month. The day figure is rounded down to whole {cur === "NPR" || cur === "INR" ? "rupees" : "units"}.
       </span>
     </details>
   );

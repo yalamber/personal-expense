@@ -1,49 +1,33 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { monthRange, todayIn } from "../../../shared/dates";
-import { api, ApiError, type Household, type Statement } from "../api";
+import { api, ApiError, type Household, type Member, type Statement } from "../api";
 import { onLinkClick } from "../router";
 import { useInstall } from "../pwa";
 import { Icon } from "../ui";
+import { Inbox } from "./Inbox";
 
 /**
- * Settings: the people, the accounts and the plumbing that keeps the book filling itself. On a
- * wide screen a menu sits on the left with the chosen section beside it; on a phone the menu is
- * the page, and each section opens with a way back.
+ * Settings: the people, the accounts and the plumbing that keeps the book filling itself. Six
+ * entries, each a thing a family would name; the pages reached from inside one (the people, the
+ * starting point, the inbox) stay under it rather than crowding the menu. On a wide screen the
+ * menu sits on the left with the chosen section beside it; on a phone the menu is the page, and
+ * each section opens with a way back.
  */
 
-export type SettingsSection = "household" | "people" | "start" | "accounts" | "every-month" | "envelopes" | "forwarding" | "inbox" | "app";
+export type SettingsSection = "household" | "people" | "accounts" | "start" | "every-month" | "envelopes" | "statements" | "inbox" | "app";
 
-export const SETTINGS_MENU: { group: string; items: { id: SettingsSection; title: string; text: string }[] }[] = [
-  {
-    group: "Household",
-    items: [
-      { id: "household", title: "Household", text: "Payday, AI help, your data, signing out" },
-      { id: "people", title: "People", text: "Who can see and log money, and who can only look" },
-    ],
-  },
-  {
-    group: "Money",
-    items: [
-      { id: "start", title: "Starting point", text: "Today's balances, fixed deposits, loans and a usual month" },
-      { id: "accounts", title: "Accounts", text: "Bank, savings, FDs, loans and cards" },
-      { id: "every-month", title: "Every month", text: "Rent, fees and the salary: what comes and goes each month" },
-      { id: "envelopes", title: "Envelopes", text: "Monthly amounts for the categories you want to watch" },
-    ],
-  },
-  {
-    group: "Statements",
-    items: [
-      { id: "forwarding", title: "Statements by email", text: "Your forwarding address, Gmail setup and confirmation codes" },
-      { id: "inbox", title: "Inbox", text: "Every email and file that has arrived, and what happened to it" },
-    ],
-  },
-  {
-    group: "This phone",
-    items: [{ id: "app", title: "The app", text: "On the home screen, without a signal, updates" }],
-  },
+export const SETTINGS_MENU: { id: SettingsSection; title: string; text: string; children?: { id: SettingsSection; title: string }[] }[] = [
+  { id: "household", title: "Household", text: "Payday, the people, AI help, your data", children: [{ id: "people", title: "People" }] },
+  { id: "accounts", title: "Accounts", text: "Bank, savings, FDs, loans and cards, and where the book starts", children: [{ id: "start", title: "Starting point" }] },
+  { id: "every-month", title: "Every month", text: "Rent, fees and the salary, as they come and go" },
+  { id: "envelopes", title: "Envelopes", text: "A monthly limit for the categories you watch" },
+  { id: "statements", title: "Statements", text: "The address banks write to, and every email that arrived", children: [{ id: "inbox", title: "Inbox" }] },
+  { id: "app", title: "The app", text: "On the home screen, without a signal, updates" },
 ];
 
-const SECTIONS = new Set<string>(SETTINGS_MENU.flatMap((g) => g.items.map((i) => i.id)));
+const SECTIONS = new Set<string>(SETTINGS_MENU.flatMap((i) => [i.id, ...(i.children ?? []).map((c) => c.id)]));
+/** The menu entry a section sits under: itself, or its parent for a page reached from inside one. */
+const PARENT: Partial<Record<SettingsSection, SettingsSection>> = Object.fromEntries(SETTINGS_MENU.flatMap((i) => (i.children ?? []).map((c) => [c.id, i.id])));
 
 /** The section a /settings path points at, or null for the menu itself. */
 export function sectionOf(sub: string): SettingsSection | null {
@@ -65,6 +49,8 @@ export function useNarrow(): boolean {
 
 export function SettingsLayout({ household, section, narrow, children }: { household: Household; section: SettingsSection | null; narrow: boolean; children: ReactNode }) {
   const base = `/h/${household.id}/settings`;
+  const parent = section ? PARENT[section] : undefined;
+  const entry = (id: SettingsSection | undefined) => SETTINGS_MENU.find((i) => i.id === id);
   if (narrow && !section) {
     return (
       <>
@@ -72,30 +58,26 @@ export function SettingsLayout({ household, section, narrow, children }: { house
           <span className="eyebrow">{household.name}</span>
           <h1>Settings</h1>
         </div>
-        {SETTINGS_MENU.map((g) => (
-          <section key={g.group} className="card settings-menu" aria-labelledby={`sg-${g.group}`}>
-            <h2 id={`sg-${g.group}`} className="eyebrow">
-              {g.group}
-            </h2>
-            {g.items.map((i) => (
-              <a key={i.id} href={`${base}/${i.id}`} onClick={onLinkClick}>
-                <span className="stack" style={{ gap: 1, minWidth: 0 }}>
-                  <strong>{i.title}</strong>
-                  <span className="small muted">{i.text}</span>
-                </span>
-                <Icon.next />
-              </a>
-            ))}
-          </section>
-        ))}
+        <section className="card settings-menu" aria-label="Settings sections">
+          {SETTINGS_MENU.map((i) => (
+            <a key={i.id} href={`${base}/${i.id}`} onClick={onLinkClick}>
+              <span className="stack" style={{ gap: 1, minWidth: 0 }}>
+                <strong>{i.title}</strong>
+                <span className="small muted">{i.text}</span>
+              </span>
+              <Icon.next />
+            </a>
+          ))}
+        </section>
       </>
     );
   }
   if (narrow) {
+    // A page reached from inside a section goes back to that section, not to the menu.
     return (
       <>
-        <a className="back" href={base} onClick={onLinkClick}>
-          <Icon.back /> Settings
+        <a className="back" href={parent ? `${base}/${parent}` : base} onClick={onLinkClick}>
+          <Icon.back /> {parent ? entry(parent)?.title : "Settings"}
         </a>
         {children}
       </>
@@ -104,19 +86,57 @@ export function SettingsLayout({ household, section, narrow, children }: { house
   return (
     <div className="settings">
       <nav className="settings-nav" aria-label="Settings sections">
-        {SETTINGS_MENU.map((g) => (
-          <div key={g.group} className="group">
-            <span className="eyebrow">{g.group}</span>
-            {g.items.map((i) => (
-              <a key={i.id} href={`${base}/${i.id}`} aria-current={section === i.id ? "page" : undefined} onClick={onLinkClick}>
+        {SETTINGS_MENU.map((i) => {
+          const open = section === i.id || parent === i.id;
+          return (
+            <div key={i.id} className="group">
+              <a href={`${base}/${i.id}`} aria-current={section === i.id ? "page" : undefined} onClick={onLinkClick}>
                 {i.title}
               </a>
-            ))}
-          </div>
-        ))}
+              {open &&
+                (i.children ?? []).map((c) => (
+                  <a key={c.id} className="child" href={`${base}/${c.id}`} aria-current={section === c.id ? "page" : undefined} onClick={onLinkClick}>
+                    {c.title}
+                  </a>
+                ))}
+            </div>
+          );
+        })}
       </nav>
       <div className="settings-body">{children}</div>
     </div>
+  );
+}
+
+/** Who is in the household, in a line each, with the page that changes it. */
+function PeopleCard({ household }: { household: Household }) {
+  const [rows, setRows] = useState<Member[] | null>(null);
+  useEffect(() => {
+    api.members(household.id).then(setRows).catch(() => setRows([]));
+  }, [household.id]);
+  return (
+    <section className="card stack" aria-labelledby="people-h" style={{ gap: 8 }}>
+      <div className="row between">
+        <h2 id="people-h">People</h2>
+        <a className="small" href={`/h/${household.id}/settings/people`} onClick={onLinkClick}>
+          {household.me.role === "admin" ? "Invite or change roles" : "All people"}
+        </a>
+      </div>
+      {rows === null && <span className="small muted">…</span>}
+      {rows?.map((m) => (
+        <div key={m.id} className="kv small">
+          <span>
+            <strong>{m.name}</strong>
+            {m.id === household.me.id ? " (you)" : ""}
+          </span>
+          <span className="muted">
+            {m.role}
+            {m.joinedAt ? "" : " · invited"}
+          </span>
+        </div>
+      ))}
+      <span className="small muted">Admins change settings and link emails; members log money; viewers only look.</span>
+    </section>
   );
 }
 
@@ -180,6 +200,7 @@ export function HouseholdSettings({ household, onLogout, onChanged }: { househol
         {notice && <div className="ok">{notice}</div>}
         {error && <div className="error">{error}</div>}
       </section>
+      <PeopleCard household={household} />
       <section className="card stack" aria-labelledby="ai-h">
         <h2 id="ai-h">AI help</h2>
         <label className="check">
@@ -288,8 +309,8 @@ export function AppSettings() {
   );
 }
 
-/** Statements by email: the address, how to point Gmail at it, and any confirmation codes waiting. */
-export function Forwarding({ household }: { household: Household }) {
+/** Statements: the address banks write to, how to point Gmail at it, any confirmation codes waiting, and what has arrived. */
+export function Statements({ household }: { household: Household }) {
   const [rows, setRows] = useState<Statement[] | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -306,10 +327,10 @@ export function Forwarding({ household }: { household: Household }) {
   return (
     <>
       <div className="stack" style={{ gap: 6 }}>
-        <span className="eyebrow">Statements</span>
-        <h1>Statements by email</h1>
+        <span className="eyebrow">{household.name}</span>
+        <h1>Statements</h1>
         <p className="muted" style={{ margin: 0, maxWidth: 640 }}>
-          Bank alerts and statements sent here are read into the book and checked against what the family logged. Only the odd ones ask for you in Decide.
+          Bank alerts and statements sent to this address are read into the book and checked against what the family logged. Only the odd ones ask for you in Decide.
         </p>
       </div>
 
@@ -379,6 +400,8 @@ export function Forwarding({ household }: { household: Household }) {
           Outlook and most others forward without a code: add a rule that forwards your bank's emails to the address. Bank CSV exports can also be uploaded on the Accounts page.
         </span>
       </section>
+
+      <Inbox household={household} embedded limit={6} />
     </>
   );
 }

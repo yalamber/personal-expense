@@ -76,16 +76,23 @@ const cookies = cookieFor(cookie);
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(`phone: ${e.message}`));
   await page.goto(`${BASE}/h/${hh}/settings`, { waitUntil: "networkidle" });
-  ok((await page.locator(".settings-menu").count()) === 4 && (await page.locator(".settings-nav").isVisible().catch(() => false)) === false, "phone shows the menu as the page");
+  ok((await page.locator(".settings-menu").count()) === 1 && (await page.locator(".settings-menu a").count()) === 6 && (await page.locator(".settings-nav").isVisible().catch(() => false)) === false, "phone shows the menu as the page: six entries");
   await shot(page, "settings-phone", { fullPage: true });
   await page.getByRole("link", { name: /Accounts/ }).click();
   await page.waitForSelector("h1:has-text('Accounts')");
   ok(await page.locator("a.back").isVisible(), "a section on the phone has a way back to Settings");
   await shot(page, "settings-accounts-phone", { fullPage: false });
-  for (const [name, path] of [["today", ""], ["plan", "/plan"], ["khata", "/khata"], ["app", "/settings/app"]]) {
+  for (const [name, path] of [["today", ""], ["plan", "/plan"], ["khata", "/khata"], ["app", "/settings/app"], ["statements", "/settings/statements"]]) {
     await page.goto(`${BASE}/h/${hh}${path}`, { waitUntil: "networkidle" });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (overflow > 0) errors.push(`phone ${name}: overflow ${overflow}px`);
+    if (name === "today") {
+      const hero = (await page.locator(".hero").innerText()).replace(/\s+/g, " ");
+      ok(/a day|over|Nothing in yet|Log this month/.test(hero) && /came in/.test(hero) && /For everyday things|Over by/.test(hero), "phone: Today opens on the figure and the month bar");
+      ok((await page.locator(".side > section").count()) <= 4, `phone: the side column is down to ${await page.locator(".side > section").count()} cards`);
+      await shot(page, "today-phone", { fullPage: false });
+    }
+    if (name === "statements") ok(await page.locator("a.back").isVisible() && (await page.locator("#inbox-h").count()) === 1, "phone: Statements has a way back and the inbox under the setup");
   }
   await shot(page, "settings-app-phone", { fullPage: true });
   await ctx.close();
@@ -111,6 +118,16 @@ const cookies = cookieFor(cookie);
   await shot(page, "every-month", { fullPage: true });
   await page.goto(`${BASE}/h/${hh}/decide`, { waitUntil: "networkidle" });
   ok((await page.locator("h1").first().innerText()) === "Decide", "Decide opens for the seeded household");
+  // The consolidated menu: Statements holds the inbox, People sits under Household, old addresses still work.
+  await page.goto(`${BASE}/h/${hh}/settings/statements`, { waitUntil: "networkidle" });
+  ok((await page.locator("h1").first().innerText()) === "Statements" && (await page.locator("#inbox-h").count()) === 1, "Statements is one page: the address, the setup and the inbox");
+  ok((await page.locator(".settings-nav a").count()) === 7 && (await page.locator('.settings-nav a[aria-current="page"]').innerText()) === "Statements", "the menu shows six entries, plus the inbox under Statements");
+  await shot(page, "settings-statements-desktop", { fullPage: true });
+  await page.goto(`${BASE}/h/${hh}/settings/forwarding`, { waitUntil: "networkidle" });
+  await page.waitForSelector("h1:has-text('Statements')");
+  ok(page.url().endsWith("/settings/statements"), "the old forwarding address lands on Statements");
+  await page.goto(`${BASE}/h/${hh}/settings/people`, { waitUntil: "networkidle" });
+  ok((await page.locator('.settings-nav a[aria-current="page"]').innerText()) === "People" && (await page.locator(".settings-nav a.child").count()) === 1, "People opens under Household in the menu");
   await ctx.close();
 }
 

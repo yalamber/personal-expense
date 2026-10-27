@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Household, type Statement, type StatementStatus } from "../api";
+import { onLinkClick } from "../router";
 import { PageSkeleton } from "../skeleton";
 import { FillByHand, LinkAccount, MailDetails, MailSkeleton, ReadyToAdd, WhyHeld, filledMessage, useMailPreview, when } from "./MailView";
 
@@ -16,11 +17,12 @@ const STATUS: Record<StatementStatus, { label: string; tone: "amber" | "teal" | 
 };
 
 /**
- * Settings › Inbox: every email that arrived at the statements address, newest first. Open one to
- * see where it came from, what the app read from it and the email itself; one from a new sender
- * can be linked to its account right here.
+ * Settings › Statements › Inbox: every email that arrived at the statements address, newest
+ * first. Open one to see where it came from, what the app read from it and the email itself; one
+ * from a new sender can be linked to its account right here. Embedded on the Statements page it
+ * shows the latest few, with the rest a tap away.
  */
-export function Inbox({ household }: { household: Household }) {
+export function Inbox({ household, embedded = false, limit }: { household: Household; embedded?: boolean; limit?: number }) {
   const [rows, setRows] = useState<Statement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -41,9 +43,21 @@ export function Inbox({ household }: { household: Household }) {
   }, [load]);
 
   const waiting = (rows ?? []).filter((r) => STATUS[r.status].waits);
+  const shown = limit && rows ? rows.slice(0, limit) : rows;
+  const more = rows && shown ? rows.length - shown.length : 0;
 
   return (
     <>
+      {embedded ? (
+        <div className="row between" style={{ alignItems: "baseline" }}>
+          <h2 id="inbox-h">Inbox</h2>
+          {more > 0 && (
+            <a className="small" href={`/h/${household.id}/settings/inbox`} onClick={onLinkClick}>
+              All {rows!.length} emails
+            </a>
+          )}
+        </div>
+      ) : (
       <div className="stack" style={{ gap: 6 }}>
         <h1>Inbox</h1>
         <span className="muted">Every email that arrived at your statements address. Open one to see where it came from, what the app read, and the email itself.</span>
@@ -62,6 +76,7 @@ export function Inbox({ household }: { household: Household }) {
           </button>
         </div>
       </div>
+      )}
 
       {error && <div className="error">{error}</div>}
       {!rows && !error && <PageSkeleton kind="list" />}
@@ -84,7 +99,7 @@ export function Inbox({ household }: { household: Household }) {
             </div>
           )}
           <div className="mail-list">
-            {rows.map((st) => {
+            {shown!.map((st) => {
               const s = STATUS[st.status];
               const isOpen = open === st.id;
               return (
