@@ -112,3 +112,10 @@ export function payPeriod(today: string, payDay: number): { from: string; to: st
   const start = today >= thisPay ? thisPay : `${shiftMonth(month, -1)}-${d}`;
   return { from: start, to: addDays(`${shiftMonth(start.slice(0, 7), 1)}-${d}`, -1) };
 }
+
+/** The current pay period and the ones before it, newest first: n periods in all. */
+export function payPeriods(today: string, payDay: number, n: number): { from: string; to: string }[] {
+  const out = [payPeriod(today, payDay)];
+  while (out.length < n) out.push(payPeriod(addDays(out[out.length - 1]!.from, -1), payDay));
+  return out;
+}

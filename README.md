@@ -27,7 +27,8 @@ The app has four spaces plus Settings, and Log on every screen:
   merchants that need a category (one choice files them all), a goal that could be funded from
   spare money, and Gmail forwarding codes.
 - **Plan**: the goals as cards in the order they are funded, each with how far along it is, when
-  its money is ready against the date wanted, and what goes into it each month. One lever, what
+  its money is ready against the date wanted, and what goes into it each month: the amount
+  planned, what has actually come in since payday against it, and the usual month. One lever, what
   goes in each month, shows every goal's new date before anything is saved. Then the timeline of
   what happens when (goals landing, loans paid off, money moments), the guesses that move the
   dates (prices, pay rises, a paid-off installment) and the money moments. Goals have parts (cost

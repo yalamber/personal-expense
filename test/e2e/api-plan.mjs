@@ -36,6 +36,15 @@ ok((await call("GET", `${H}/goals`, null, 200)).data.find((x) => x.id === land).
 await call("PATCH", `${H}/goals/${land}`, { loan: { amount: "6000000", rate: "0", years: 5 } }, 200);
 ok((await call("GET", `${H}/goals`, null, 200)).data.find((x) => x.id === land).loan.rateBp === 0, "a loan from family at no interest is fine too");
 const car = (await call("POST", `${H}/goals`, { name: "Scooter", kind: "purchase", target: "300000", monthly: "10000", loan: { amount: "150000", rate: "13", years: 2 } }, 201)).data.id;
+
+// What actually came in against the plan: this pay period on each goal, and the usual month once a period has finished.
+await call("POST", `${H}/goals/${car}/contributions`, { amount: "4,000", date: iso(new Date()), kind: "saved" }, 201);
+plan = (await call("GET", `${H}/plan`, null, 200)).data;
+g = plan.goals.find((x) => x.id === car);
+ok(plan.period && plan.period.from <= plan.today && plan.today <= plan.period.to, `the plan says which pay period its figures cover (${plan.period.from} to ${plan.period.to})`);
+ok(g.inPeriodMinor === rs(4000) && g.monthlyPlanMinor === rs(10000), "a goal says what came in this pay period against its monthly plan");
+ok(g.usualMonthlyMinor === null && g.usualPeriods === 0, "and has no usual month until a pay period has finished since it began");
+ok(plan.goals.find((x) => x.id === land).inPeriodMinor === 0, "a goal nothing went into says so");
 ok((await call("GET", `${H}/goals`, null, 200)).data.find((x) => x.id === car).loan.months === 24, "a goal can be created with its loan");
 
 // --- Money moments ---

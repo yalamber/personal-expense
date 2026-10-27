@@ -5,11 +5,11 @@
 import { Hono } from "hono";
 import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
-import { isDate, shiftMonth, todayIn } from "../../../shared/dates";
+import { isDate, payPeriod, shiftMonth, todayIn } from "../../../shared/dates";
 import { formatMinor, parseAmountToMinor } from "../../../shared/money";
 import { schema } from "../../db";
 import { newId, nowIso } from "../../lib/ids";
-import { loadAccountViews, loadGoals, loadPlanEvents, loanCommitments, monthlyBasis, spareAfter } from "../../ledger/overview";
+import { goalPace, loadAccountViews, loadGoals, loadPlanEvents, loanCommitments, monthlyBasis, spareAfter } from "../../ledger/overview";
 import { parseRate } from "../../../shared/deposit";
 import { createTransfer, transactionValues } from "../../ledger/transactions";
 import type { AppContext, HonoEnv } from "../context";
@@ -72,12 +72,16 @@ goalRoutes.get("/plan", async (c) => {
   const today = todayIn(household.timezone);
   const month = today.slice(0, 7);
   const [goals, basis, accounts] = await Promise.all([loadGoals(db, household.id, today), monthlyBasis(db, household.id, month), loadAccountViews(db, household.id, today)]);
+  const pace = await goalPace(db, household.id, goals, today, household.monthStartDay);
   const plannedMinor = goals.filter((g) => !g.completedAt).reduce((s, g) => s + g.monthlyPlanMinor, 0);
   const loans = loanCommitments(accounts);
   return c.json({
     currency: household.currency,
+    today,
+    // The pay period the "in so far" figures cover.
+    period: payPeriod(today, household.monthStartDay),
     startMonth: shiftMonth(month, 1),
-    goals,
+    goals: goals.map((g) => ({ ...g, ...(pace.get(g.id) ?? { inPeriodMinor: 0, usualMonthlyMinor: null, usualPeriods: 0 }) })),
     plannedMinor,
     basis,
     loans,

@@ -32,6 +32,8 @@ for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["ph
   const landCard = page.locator(".goal-card").filter({ hasText: "Land" }).first();
   ok((await landCard.locator("a.ways").count()) === 1 && /late|out of reach/i.test(await landCard.innerText()), `${label}: the late goal says so on its card and offers ways to get there`);
   ok((await page.locator(".goal-card").count()) >= 2 && /Money ready/.test(await landCard.innerText()), `${label}: each goal has a card with when its money is ready`);
+  const scooterCard = (await page.locator(".goal-card").filter({ hasText: "Scooter" }).first().innerText()).replace(/\s+/g, " ");
+  ok(/planned/.test(scooterCard) && /in (since payday|this month)/.test(scooterCard) && (await page.locator(".goal-card .meter").count()) >= 1, `${label}: a goal with a monthly amount shows what came in against it`);
   const moments = await page.locator("section[aria-labelledby='moments-h']").innerText();
   ok(/Dashain bonus/.test(moments) && /every/.test(moments) && /650,000|6,50,000/.test(moments), `${label}: the money moments card lists them`);
   ok(/If our income rises/.test(await page.locator("body").innerText()), `${label}: pay rises can be tried`);

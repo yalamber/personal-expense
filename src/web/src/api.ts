@@ -349,6 +349,10 @@ export type Goal = {
   parts: GoalPart[];
   /** Part of the price to borrow when it is bought: only the rest is saved. */
   loan: { amountMinor: number; rateBp: number; months: number } | null;
+  /** From the plan: what came in this pay period, and the usual month (older saved copies lack these). */
+  inPeriodMinor?: number;
+  usualMonthlyMinor?: number | null;
+  usualPeriods?: number;
 };
 
 export type LoanCommitments = {
@@ -361,6 +365,9 @@ export type LoanCommitments = {
 
 export type PlanData = {
   currency: string;
+  today?: string;
+  /** The pay period the goals' "in so far" figures cover. */
+  period?: { from: string; to: string };
   startMonth: string;
   goals: Goal[];
   plannedMinor: number;

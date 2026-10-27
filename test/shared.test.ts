@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseCsv, toCsv, detectDelimiter } from "../src/shared/csv";
 import { applyMapping, guessMapping, isCsvMapping, type CsvMapping } from "../src/shared/csv-mapping";
-import { addDays, guessDateFormat, monthRange, parseDate, shiftMonth } from "../src/shared/dates";
+import { addDays, guessDateFormat, monthRange, parseDate, payPeriods, shiftMonth } from "../src/shared/dates";
 import { normalizeMerchant } from "../src/shared/merchant";
 import { formatMinor, minorDigits, minorToDecimal, parseAmountToMinor } from "../src/shared/money";
 
@@ -149,5 +149,25 @@ describe("csv mapping", () => {
   it("rejects malformed mappings", () => {
     expect(isCsvMapping({ hasHeader: true })).toBe(false);
     expect(isCsvMapping(null)).toBe(false);
+  });
+});
+
+describe("pay periods", () => {
+  it("runs payday to the day before the next, newest first", () => {
+    expect(payPeriods("2026-10-27", 7, 3)).toEqual([
+      { from: "2026-10-07", to: "2026-11-06" },
+      { from: "2026-09-07", to: "2026-10-06" },
+      { from: "2026-08-07", to: "2026-09-06" },
+    ]);
+    expect(payPeriods("2026-10-03", 7, 2)).toEqual([
+      { from: "2026-09-07", to: "2026-10-06" },
+      { from: "2026-08-07", to: "2026-09-06" },
+    ]);
+  });
+  it("is the calendar month when payday is the 1st", () => {
+    expect(payPeriods("2026-03-15", 1, 2)).toEqual([
+      { from: "2026-03-01", to: "2026-03-31" },
+      { from: "2026-02-01", to: "2026-02-28" },
+    ]);
   });
 });

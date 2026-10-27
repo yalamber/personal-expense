@@ -20,7 +20,7 @@ import { schema, type Db } from "../../db";
 import { newId } from "../../lib/ids";
 import { loadMerchantIndex } from "../../ledger/merchants";
 import { worth } from "../../../shared/worth";
-import { bookBalance, loadAccountViews, loadGoals, loadPlanEvents, loanCommitments, monthlyBasis, onEverydayAccounts, spareAfter, toPlanGoals, type AccountView } from "../../ledger/overview";
+import { bookBalance, goalInflows, loadAccountViews, loadGoals, loadPlanEvents, loanCommitments, monthlyBasis, onEverydayAccounts, spareAfter, toPlanGoals, type AccountView } from "../../ledger/overview";
 import { summarize } from "../../ledger/summary";
 import type { AppContext, HonoEnv } from "../context";
 import { readJson, requireWriter } from "../context";
@@ -432,23 +432,7 @@ homeRoutes.get("/today", async (c) => {
       .where(and(eq(schema.transactions.householdId, household.id), between(schema.transactions.date, from, to), isNull(schema.transactions.voidedAt), onEverydayAccounts())),
     db.query.budgets.findMany({ where: and(eq(schema.budgets.householdId, household.id), eq(schema.budgets.month, month)) }),
     loadGoals(db, household.id, today),
-    db
-      .select({ total: sql<number>`coalesce(sum(${schema.goalContributions.amountMinor}), 0)` })
-      .from(schema.goalContributions)
-      .innerJoin(schema.goals, eq(schema.goals.id, schema.goalContributions.goalId))
-      .leftJoin(schema.transactions, eq(schema.transactions.id, schema.goalContributions.transactionId))
-      .leftJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
-      .where(
-        and(
-          eq(schema.goals.householdId, household.id),
-          between(schema.goalContributions.date, from, to),
-          sql`${schema.goalContributions.note} is not 'Already saved'`,
-          // Money that moved this period: saved, or paid from an account (not paid before the book, not out of savings).
-          sql`(${schema.goalContributions.kind} = 'saved' or ${schema.goalContributions.transactionId} is not null)`,
-          // A baina paid from the goal's own savings account is not this period's money.
-          sql`(${schema.accounts.goalId} is null or ${schema.accounts.goalId} != ${schema.goalContributions.goalId})`,
-        ),
-      ),
+    goalInflows(db, household.id, from, to),
     loadDecideCards(c, recurring),
     db
       .select({ status: schema.statementEmails.status, n: sql<number>`count(*)` })
@@ -468,7 +452,7 @@ homeRoutes.get("/today", async (c) => {
   const savedOtherMinor = Math.max(0, summarize(txs.filter((t) => !t.goalId), categories).saved);
   const active = goals.filter((g) => !g.completedAt);
   const plannedMinor = active.reduce((sum, g) => sum + g.monthlyPlanMinor, 0);
-  const movedMinor = Number(moved[0]?.total ?? 0);
+  const movedMinor = moved.reduce((sum, r) => sum + r.amountMinor, 0);
   const goalsMinor = Math.max(plannedMinor, movedMinor);
   const views = await loadAccountViews(db, household.id, today);
   const loans = loanCommitments(views);

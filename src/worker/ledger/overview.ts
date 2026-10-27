@@ -3,7 +3,7 @@
  * goals with what is saved, loan installments, and the household's typical month.
  */
 import { and, asc, between, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
-import { addDays, monthRange, shiftMonth } from "../../shared/dates";
+import { addDays, monthRange, payPeriods, shiftMonth } from "../../shared/dates";
 import { accruedInterest, addMonths, daysBetween, maturityValue, termMonths, totalInterest, type Deposit } from "../../shared/deposit";
 import { interestLeft, monthsLeft, splitPayment } from "../../shared/loan";
 import type { PlanEvent, PlanGoal } from "../../shared/plan";
@@ -222,6 +222,7 @@ export type GoalView = {
   /** Part of the price to borrow when it is bought. */
   loan: { amountMinor: number; rateBp: number; months: number } | null;
   parts: GoalPart[];
+  createdAt: string;
 };
 
 /** Active goals in priority order, with what has gone in so far and their parts. */
@@ -266,8 +267,69 @@ export async function loadGoals(db: Db, householdId: string, today: string, opts
       accounts,
       loan: g.loanMinor && g.loanMonths ? { amountMinor: g.loanMinor, rateBp: g.loanRateBp ?? 0, months: g.loanMonths } : null,
       parts: parts.filter((p) => p.goalId === g.id).map((p) => ({ id: p.id, name: p.name, amountMinor: p.amountMinor, sort: p.sort, doneAt: p.doneAt })),
+      createdAt: g.createdAt,
     };
   });
+}
+
+/**
+ * Money that moved into goals between two dates, as Today counts it: recorded as saved, or paid
+ * from an account; not money saved before the book, and not a baina paid out of the goal's own
+ * savings account. One row per contribution.
+ */
+export async function goalInflows(db: Db, householdId: string, from: string, to: string): Promise<{ goalId: string; date: string; amountMinor: number }[]> {
+  return db
+    .select({ goalId: schema.goalContributions.goalId, date: schema.goalContributions.date, amountMinor: schema.goalContributions.amountMinor })
+    .from(schema.goalContributions)
+    .innerJoin(schema.goals, eq(schema.goals.id, schema.goalContributions.goalId))
+    .leftJoin(schema.transactions, eq(schema.transactions.id, schema.goalContributions.transactionId))
+    .leftJoin(schema.accounts, eq(schema.accounts.id, schema.transactions.accountId))
+    .where(
+      and(
+        eq(schema.goals.householdId, householdId),
+        between(schema.goalContributions.date, from, to),
+        sql`${schema.goalContributions.note} is not 'Already saved'`,
+        sql`(${schema.goalContributions.kind} = 'saved' or ${schema.goalContributions.transactionId} is not null)`,
+        sql`(${schema.accounts.goalId} is null or ${schema.accounts.goalId} != ${schema.goalContributions.goalId})`,
+      ),
+    );
+}
+
+export type GoalPace = {
+  /** What came into the goal this pay period. */
+  inPeriodMinor: number;
+  /** The average of the finished pay periods since the goal began, up to three; null before the first one ends. */
+  usualMonthlyMinor: number | null;
+  usualPeriods: number;
+};
+
+/** How each goal's money is actually arriving, against the plan: this pay period, and the usual month. */
+export async function goalPace(db: Db, householdId: string, goals: GoalView[], today: string, payDay: number): Promise<Map<string, GoalPace>> {
+  const out = new Map<string, GoalPace>();
+  if (!goals.length) return out;
+  const periods = payPeriods(today, payDay, 4);
+  const [current, ...past] = periods as [{ from: string; to: string }, ...{ from: string; to: string }[]];
+  const [rows, firsts] = await Promise.all([
+    goalInflows(db, householdId, periods[periods.length - 1]!.from, current.to),
+    db
+      .select({ goalId: schema.goalContributions.goalId, first: sql<string>`min(${schema.goalContributions.date})` })
+      .from(schema.goalContributions)
+      .where(inArray(schema.goalContributions.goalId, goals.map((g) => g.id)))
+      .groupBy(schema.goalContributions.goalId),
+  ]);
+  const inRange = (goalId: string, p: { from: string; to: string }) => rows.filter((r) => r.goalId === goalId && r.date >= p.from && r.date <= p.to).reduce((s, r) => s + r.amountMinor, 0);
+  for (const g of goals) {
+    // The goal began when it was added, or at its first money if that was earlier (money saved before the book).
+    const first = firsts.find((f) => f.goalId === g.id)?.first;
+    const began = [g.createdAt.slice(0, 10), first].filter((d): d is string => Boolean(d)).sort()[0]!;
+    const counted = past.filter((p) => p.to >= began);
+    out.set(g.id, {
+      inPeriodMinor: inRange(g.id, current),
+      usualMonthlyMinor: counted.length ? Math.round(counted.reduce((s, p) => s + inRange(g.id, p), 0) / counted.length) : null,
+      usualPeriods: counted.length,
+    });
+  }
+  return out;
 }
 
 /** Goals still being saved for, in the simulator's shape. */

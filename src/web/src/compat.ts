@@ -10,7 +10,7 @@ export function normalizePlan(p: PlanData): PlanData {
   return {
     ...p,
     events: Array.isArray(p.events) ? p.events : [],
-    goals: (p.goals ?? []).map((g) => ({ ...g, loan: g.loan ?? null, parts: g.parts ?? [], accounts: g.accounts ?? [] })),
+    goals: (p.goals ?? []).map((g) => ({ ...g, loan: g.loan ?? null, parts: g.parts ?? [], accounts: g.accounts ?? [], inPeriodMinor: g.inPeriodMinor ?? 0, usualMonthlyMinor: g.usualMonthlyMinor ?? null, usualPeriods: g.usualPeriods ?? 0 })),
     loans: {
       monthlyMinor: p.loans?.monthlyMinor ?? 0,
       monthlyInterestMinor: p.loans?.monthlyInterestMinor ?? 0,

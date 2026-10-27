@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { lateLabel, monthName, simulatePlan, spanLabel, type GoalOutcome, type PlanGoal } from "../../../shared/plan";
 import { minorDigits, parseAmountToMinor } from "../../../shared/money";
+import { daysBetween } from "../../../shared/deposit";
 import { api, ApiError, paths, type Account, type Goal, type Household, type PlanData } from "../api";
 import { useQuery } from "../query";
 import { PageSkeleton } from "../skeleton";
 import { onLinkClick } from "../router";
 import { Icon, amountInput, formatMoney } from "../ui";
-import { Lines, SERIES } from "../charts";
+import { Lines, Meter, SERIES } from "../charts";
 import { MomentsCard, wholeMoney } from "./planKit";
 import { normalizePlan } from "../compat";
 
@@ -74,8 +75,12 @@ function diffText(before: GoalOutcome | undefined, after: GoalOutcome | undefine
  * One goal as a card: how far along it is, when its money is ready against the date wanted, what
  * goes into it each month, and the way to its own page. A late goal says so and offers ways there.
  */
-function GoalCard({ household, goal: g, outcome: o, index, count, canWrite, onMove }: { household: Household; goal: Goal; outcome: GoalOutcome | undefined; index: number; count: number; canWrite: boolean; onMove: (delta: -1 | 1) => void }) {
+function GoalCard({ household, goal: g, outcome: o, index, count, canWrite, onMove, since, elapsed }: { household: Household; goal: Goal; outcome: GoalOutcome | undefined; index: number; count: number; canWrite: boolean; onMove: (delta: -1 | 1) => void; since: string; elapsed: number }) {
   const cur = household.currency;
+  const inPeriod = g.inPeriodMinor ?? 0;
+  const usual = g.usualMonthlyMinor ?? null;
+  // Short of the plan is only a worry once most of the period has gone.
+  const paceTone = inPeriod >= g.monthlyPlanMinor ? "good" : elapsed > 0.75 ? "warning" : "good";
   const Kind = g.kind === "build" ? Icon.house : KIND_ICON[g.kind];
   const v = verdict(g, o);
   const target = o?.finalTargetMinor ?? g.targetMinor;
@@ -133,7 +138,21 @@ function GoalCard({ household, goal: g, outcome: o, index, count, canWrite, onMo
             )}
           </dd>
           <dt>Each month</dt>
-          <dd>{g.monthlyPlanMinor ? `${formatMoney(g.monthlyPlanMinor, cur)} of its own` : "nothing of its own yet: it moves only on extra money put into the plan, or on what rolls on when a goal is reached"}</dd>
+          <dd>
+            {g.monthlyPlanMinor ? (
+              <span className="stack" style={{ gap: 5 }}>
+                <span>
+                  {formatMoney(g.monthlyPlanMinor, cur)} planned
+                  {usual !== null ? ` · usually ${usual > 0 ? formatMoney(usual, cur) : "nothing"} ${g.usualPeriods === 1 ? "last time" : `over the last ${g.usualPeriods} paydays`}` : ""}
+                </span>
+                <Meter compact value={inPeriod} max={g.monthlyPlanMinor} tone={paceTone} left={`${formatMoney(inPeriod, cur)} in ${since}`} right={`${Math.round((inPeriod / g.monthlyPlanMinor) * 100)}%`} />
+              </span>
+            ) : inPeriod > 0 ? (
+              `nothing planned, but ${formatMoney(inPeriod, cur)} came in ${since}`
+            ) : (
+              "nothing of its own yet: it moves only on extra money put into the plan, or on what rolls on when a goal is reached"
+            )}
+          </dd>
           {g.loan && (
             <>
               <dt>Borrowing</dt>
@@ -264,6 +283,10 @@ export function Plan({ household, version, onChanged }: { household: Household; 
   const changed = amount !== current;
   const extraTo = sim?.extraGoalId ? data.goals.find((g) => g.id === sim.extraGoalId)?.name : null;
   const noMonthly = active.length > 0 && active.every((g) => !g.monthlyPlanMinor);
+  // The pay period the cards' "in so far" figures cover, and how much of it has gone.
+  const period = data.period ?? null;
+  const since = period && period.from.slice(8) !== "01" ? "since payday" : "this month";
+  const elapsed = period && data.today ? Math.min(1, Math.max(0, (daysBetween(period.from, data.today) + 1) / (daysBetween(period.from, period.to) + 1))) : 0;
 
   // The timeline: each goal's money ready (and a build's start), loans paid off, money moments.
   type Mile = { key: string; order: string; when: string; late: boolean; done: boolean; href: string; title: string; chip: string | null; chipTone: string; note: string; Icon: (p: { size?: number }) => React.ReactElement };
@@ -398,7 +421,7 @@ export function Plan({ household, version, onChanged }: { household: Household; 
 
       <section className="goal-grid" aria-label="The goals, in the order they are funded">
         {data.goals.map((g, i) => (
-          <GoalCard key={g.id} household={household} goal={g} outcome={byId.get(g.id)} index={i} count={data.goals.length} canWrite={canWrite} onMove={(d) => void move(g.id, d)} />
+          <GoalCard key={g.id} household={household} goal={g} outcome={byId.get(g.id)} index={i} count={data.goals.length} canWrite={canWrite} onMove={(d) => void move(g.id, d)} since={since} elapsed={elapsed} />
         ))}
       </section>
       {noMonthly && (
